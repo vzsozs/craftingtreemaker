@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crafting_tree_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crafting
+      POSTGRES_PASSWORD: crafting_secret
+      POSTGRES_DB: crafting_tree
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
