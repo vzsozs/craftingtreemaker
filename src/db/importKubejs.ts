@@ -58,66 +58,10 @@ const parseOutput = (outData: any, isFluid: boolean) => {
     return { itemId, amount };
 };
 
-function scanAllRecipes() {
-  console.log("Scanning all recipes to build dependency map...");
-  let count = 0;
-  
-  function scanDir(dir: string) {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    for (const f of files) {
-      const fullPath = path.join(dir, f.name);
-      if (f.isDirectory()) {
-        scanDir(fullPath);
-      } else if (f.name.endsWith(".json")) {
-        try {
-          const content = fs.readFileSync(fullPath, "utf-8");
-          const data = JSON.parse(content);
-          
-          let outputs: string[] = [];
-          if (data.outputs) {
-             if (data.outputs.item) {
-                data.outputs.item.forEach((i: any) => {
-                   const parsed = parseOutput(i, false);
-                   if (parsed.itemId) outputs.push(parsed.itemId);
-                });
-             }
-             if (data.outputs.fluid) {
-                data.outputs.fluid.forEach((f: any) => {
-                   const parsed = parseOutput(f, true);
-                   if (parsed.itemId) outputs.push(parsed.itemId);
-                });
-             }
-          } else if (data.result && typeof data.result === 'string') {
-             outputs.push(data.result);
-          } else if (data.result && data.result.item) {
-             outputs.push(data.result.item);
-          }
-
-          for (const out of outputs) {
-             if (!outputToRecipeMap.has(out)) {
-                outputToRecipeMap.set(out, []);
-             }
-             outputToRecipeMap.get(out)!.push(fullPath);
-          }
-          count++;
-        } catch (e) {}
-      }
-    }
-  }
-
-  scanDir(path.join(dumpsDir, "added_recipes"));
-  scanDir(path.join(dumpsDir, "recipes"));
-  console.log(`Scanned ${count} recipe files. Found producers for ${outputToRecipeMap.size} unique items.`);
-}
-
-const parsedRecipes = new Set<string>();
 const itemsToInsert = new Map<string, { id: string, name: string, type: "item"|"fluid", modId: string }>();
 const recipesToInsert: any[] = [];
 
-async function parseRecipeFile(filePath: string) {
-  if (parsedRecipes.has(filePath)) return;
-  parsedRecipes.add(filePath);
+function parseRecipeFile(filePath: string) {
 
   const content = fs.readFileSync(filePath, "utf-8");
   const data = JSON.parse(content);
@@ -186,15 +130,6 @@ async function parseRecipeFile(filePath: string) {
         }
         
         recInputs.push({ itemId, amount, catalyst: isCatalyst });
-        
-        if (outputToRecipeMap.has(itemId)) {
-           const producers = outputToRecipeMap.get(itemId)!;
-           if (parsedRecipes.size < 15000) {
-               for (const p of producers) {
-                  parseRecipeFile(p);
-               }
-           }
-        }
      }
   };
 
@@ -244,21 +179,36 @@ async function parseRecipeFile(filePath: string) {
 }
 
 async function main() {
-  scanAllRecipes();
+  console.log("Clearing old data...");
+  await db.delete(recipes);
+  await db.delete(items);
+
+  console.log("Scanning and parsing all recipe files...");
+  let count = 0;
   
-  const targetRecipe = path.join(dumpsDir, "added_recipes/tfg/mixer/bakelite_asbestos.json");
-  if (!fs.existsSync(targetRecipe)) {
-      console.error("Target recipe not found!");
-      return;
+  function scanDir(dir: string) {
+    if (!fs.existsSync(dir)) return;
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    for (const f of files) {
+      const fullPath = path.join(dir, f.name);
+      if (f.isDirectory()) {
+        scanDir(fullPath);
+      } else if (f.name.endsWith(".json")) {
+        try {
+          parseRecipeFile(fullPath);
+          count++;
+          if (count % 10000 === 0) console.log(`Parsed ${count} files...`);
+        } catch (e) {}
+      }
+    }
   }
 
-  console.log("Parsing target recipe and recursively tracing...");
-  await parseRecipeFile(targetRecipe);
+  scanDir(path.join(dumpsDir, "added_recipes"));
+  scanDir(path.join(dumpsDir, "recipes"));
 
-  console.log(`Finished parsing. Found ${recipesToInsert.length} recipes in the chain.`);
+  console.log(`Finished parsing. Found ${recipesToInsert.length} valid recipes and ${itemsToInsert.size} unique items.`);
   
-  console.log("Inserting data to DB...");
-  
+  console.log("Inserting items to DB...");
   const itemsArr = Array.from(itemsToInsert.values());
   if (itemsArr.length > 0) {
       for (let i = 0; i < itemsArr.length; i += 1000) {
@@ -266,13 +216,14 @@ async function main() {
       }
   }
   
+  console.log("Inserting recipes to DB...");
   if (recipesToInsert.length > 0) {
       for (let i = 0; i < recipesToInsert.length; i += 1000) {
           await db.insert(recipes).values(recipesToInsert.slice(i, i + 1000)).onConflictDoNothing();
       }
   }
 
-  console.log("Done! Inserted the bakelite chain successfully.");
+  console.log("Done! Inserted the full database successfully.");
   process.exit(0);
 }
 
