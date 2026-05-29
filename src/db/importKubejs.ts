@@ -118,6 +118,9 @@ function parseRecipeFile(filePath: string) {
 
      if (isFluid) {
         itemId = ingData.content?.value?.[0]?.fluid;
+        if (!itemId && ingData.content?.value?.[0]?.tag) {
+            itemId = resolveTag(ingData.content.value[0].tag, "fluid");
+        }
      } else {
         const ing = ingData.content?.ingredient;
         if (ing?.item) itemId = ing.item;
