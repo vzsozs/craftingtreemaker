@@ -50,6 +50,13 @@ const parseOutput = (outData: any, isFluid: boolean) => {
     let amount = isFluid ? outData.content?.amount || 1000 : outData.content?.count || 1;
     
     itemId = isFluid ? outData.content?.fluid || outData.fluid : outData.content?.item || outData.item;
+    
+    if (!itemId && !isFluid) {
+        const ing = outData.content?.ingredient;
+        if (ing?.item) itemId = ing.item;
+        else if (ing?.tag) itemId = resolveTag(ing.tag, "item");
+    }
+
     if (!itemId) {
        if (outData.content?.value && outData.content?.value[0]) {
            itemId = isFluid ? outData.content.value[0].fluid : outData.content.value[0].item;
@@ -91,9 +98,11 @@ function parseRecipeFile(filePath: string) {
       
       const machineName = type.substring(6);
       type = `gtceu:${tier}_${machineName}`;
+  } else if (type === "minecraft:crafting_shaped" || type === "minecraft:crafting_shapeless") {
+      type = "minecraft:crafting_table";
   }
 
-  const machineId = type.split(":")[1] || type;
+  let machineId = type.split(":")[1] || type;
 
   const duration = data.duration || 100;
   const isRemoved = filePath.includes("removed_recipes") || data.type === "recipe_hint";
@@ -135,6 +144,35 @@ function parseRecipeFile(filePath: string) {
 
   if (data.inputs?.item) data.inputs.item.forEach((i: any) => parseIngredient(i, false));
   if (data.inputs?.fluid) data.inputs.fluid.forEach((f: any) => parseIngredient(f, true));
+
+  if (data.type === "minecraft:crafting_shaped") {
+      const counts: Record<string, number> = {};
+      if (data.pattern) {
+          data.pattern.forEach((row: string) => {
+              for (const char of row) {
+                  if (char !== ' ') {
+                      counts[char] = (counts[char] || 0) + 1;
+                  }
+              }
+          });
+      }
+      if (data.key) {
+          for (const [k, ingData] of Object.entries(data.key)) {
+              const amount = counts[k] || 1;
+              const ing: any = Array.isArray(ingData) ? ingData[0] : ingData;
+              let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
+              if (itemId) {
+                  const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+                  if (!itemsToInsert.has(itemId)) {
+                     itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
+                  }
+                  
+                  const isTool = itemId.includes("tool") || itemId.includes("hammer") || itemId.includes("wrench") || itemId.includes("file") || itemId.includes("saw") || itemId.includes("screwdriver") || itemId.includes("cutter") || itemId.includes("mortar");
+                  recInputs.push({ itemId, amount, catalyst: isTool });
+              }
+          }
+      }
+  }
 
   if (data.ingredients) {
       data.ingredients.forEach((ing: any) => {
