@@ -81,7 +81,7 @@ function InputSlot({
         onMouseEnter={() => !isCat && setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onClick={() => { if (!isCat) onAddChild(nodeId, inp.itemId, inp.amount * batchMultiplier); }}
-        title={isCat ? `${inp.itemName} (catalyst)` : `Add recipe for ${inp.itemName}`}
+        data-tooltip={isCat ? `${inp.itemName} (catalyst)` : `Add recipe for ${inp.itemName}`}
         style={{
           width: 44, height: 44,
           background: isCat ? "rgba(234,88,12,0.07)" : hovered ? "rgba(52,211,153,0.1)" : "#282828",
@@ -120,7 +120,7 @@ function InputSlot({
         }}>
           {inp.itemId === "gtceu:programmed_circuit" 
             ? `Conf ${displayAmount}` 
-            : `×${formatAmount(displayAmount)}`}
+            : <>{`×${formatAmount(displayAmount)}`}{(inp.itemType === "fluid" || inp.itemType === "gas") && <span style={{ fontSize: 6, opacity: 0.65 }}> mB</span>}</>}
         </div>
 
         {/* Catalyst lock – top-left */}
@@ -148,7 +148,8 @@ function InputSlot({
         fontSize: 7, color: isCat ? "#7a3a1a" : "#666",
         textAlign: "center", overflow: "hidden",
         display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-        wordBreak: "break-all",
+        wordBreak: "break-word",
+        overflowWrap: "break-word",
         fontFamily: "var(--font-geist-mono, monospace)",
         lineHeight: 1.2,
       }}>
@@ -249,7 +250,7 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
           }}
           onMouseEnter={(e) => (e.currentTarget.style.color = "#ca8a04")}
           onMouseLeave={(e) => (e.currentTarget.style.color = "#444")}
-          title="Edit note"
+          data-tooltip="Edit note"
         >✏</button>
       </div>
 
@@ -260,26 +261,20 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
         borderBottom: !isRaw && inputCount > 0 ? "1px solid rgba(255,255,255,0.06)" : "none",
       }}>
         
-        {/* LEFT: Machine */}
+        {/* LEFT: Machine – keret nélkül, közvetlenül az ikon */}
         {!isRaw && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 70 }}>
-            <div style={{
-              width: 44, height: 44, background: "#1c1917",
-              border: "2px solid #57534e", borderRadius: 6,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <IconImage 
-                itemId={data.machineId || ""} 
-                itemName={data.machineName || "M"} 
-                size={44} 
-                textStyle={{ color: "#a8a29e", fontSize: 16, fontWeight: 700, fontFamily: "monospace" }} 
-              />
-            </div>
+            <IconImage 
+              itemId={data.machineId || ""} 
+              itemName={data.machineName || "M"} 
+              size={56} 
+              textStyle={{ color: "#a8a29e", fontSize: 18, fontWeight: 700, fontFamily: "monospace" }} 
+            />
             <div style={{ 
               color: "#ddd", fontSize: 9, fontWeight: 700, marginTop: 6, 
               textAlign: "center", lineHeight: 1.1,
               overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-              wordBreak: "break-all"
+              overflowWrap: "break-word", wordBreak: "break-word"
             }}>
               {data.machineName}
             </div>
@@ -305,21 +300,21 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
            <div style={{ position: "relative" }}>
              <MainItemSlot itemId={data.itemId} itemName={data.itemName} type={data.itemType} size={46} />
              {/* Amount badge popping out at bottom right */}
-             <div style={{
-                position: "absolute", bottom: -4, right: -4,
-                background: "rgba(0,0,0,0.9)", border: "1px solid #34d399",
-                borderRadius: 4, padding: "1px 4px",
-                fontSize: 8, fontWeight: 700, color: "#6ee7b7", fontFamily: "monospace",
-                zIndex: 2,
-             }}>
-                ×{formatAmount(data.requestedAmount)}
-             </div>
+              <div style={{
+                 position: "absolute", bottom: -4, right: -4,
+                 background: "rgba(0,0,0,0.9)", border: "1px solid #34d399",
+                 borderRadius: 4, padding: "1px 4px",
+                 fontSize: 8, fontWeight: 700, color: "#6ee7b7", fontFamily: "monospace",
+                 zIndex: 2,
+              }}>
+                 ×{formatAmount(data.requestedAmount)}{(data.itemType === "fluid" || data.itemType === "gas") && <span style={{ fontSize: 6, opacity: 0.7 }}> mB</span>}
+              </div>
            </div>
            <div style={{ 
               color: "#ddd", fontSize: 9, fontWeight: 700, marginTop: 6, 
               textAlign: "center", lineHeight: 1.1,
               overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-              wordBreak: "break-all"
+              overflowWrap: "break-word", wordBreak: "break-word"
             }}>
               {data.itemName}
            </div>
@@ -339,7 +334,7 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
       {!isRaw && inputCount > 0 && (
         <div style={{
           position: "relative",
-          height: 64, // Enough room for 44px slot + text below
+          height: 76, // 44px slot + 3px margin + 2×7px label sorok + 6px top offset + 2px breathing room
           width: "100%",
         }}>
           {data.inputs.map((inp, idx) => {

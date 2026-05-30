@@ -92,6 +92,27 @@ function ItemMiniSlot({ itemId, itemName, type }: { itemId: string; itemName: st
   );
 }
 
+// GTCEu tier sorrend (index = prioritás, kisebb = alacsonyabb tier)
+const TIER_ORDER = ["ulv", "lv", "mv", "hv", "ev", "iv", "luv", "zpm", "uv", "uhv"];
+
+function getBaseMachineId(machineId: string): string {
+  if (!machineId.startsWith("gtceu:")) return machineId;
+  const part = machineId.substring(6);
+  for (const tier of TIER_ORDER) {
+    if (part.startsWith(tier + "_")) return "gtceu:" + part.substring(tier.length + 1);
+  }
+  return machineId;
+}
+
+function getTierIndex(machineId: string): number {
+  if (!machineId.startsWith("gtceu:")) return -1;
+  const part = machineId.substring(6);
+  for (let i = 0; i < TIER_ORDER.length; i++) {
+    if (part.startsWith(TIER_ORDER[i] + "_")) return i;
+  }
+  return -1;
+}
+
 export default function RecipePickerModal({
   open,
   itemId,
@@ -115,21 +136,33 @@ export default function RecipePickerModal({
       .finally(() => setLoading(false));
   }, [itemId, open]);
 
-  const groupedRecipes = recipes.reduce((acc, r) => {
-    if (!acc[r.machineName]) acc[r.machineName] = [];
-    acc[r.machineName].push(r);
+  // #2 fix: base machine szerint csoportosítunk (tier nélkül)
+  // Pl. gtceu:lv_centrifuge és gtceu:mv_centrifuge → "gtceu:centrifuge" csoportba kerülnek
+  const groupedByBase = recipes.reduce((acc, r) => {
+    const base = getBaseMachineId(r.machineId || "unknown");
+    if (!acc[base]) acc[base] = [];
+    acc[base].push(r);
     return acc;
   }, {} as Record<string, EnrichedRecipe[]>);
 
-  const machineNames = Object.keys(groupedRecipes).sort();
+  // Minden base-csoportból a legkisebb tier-ű recept az ikon és a gomb reprezentánsa
+  const baseMachineKeys = Object.keys(groupedByBase).sort();
+  const lowestTierRepresentative = (base: string): EnrichedRecipe => {
+    const group = groupedByBase[base];
+    return group.reduce((best, r) => {
+      const bi = getTierIndex(best.machineId);
+      const ri = getTierIndex(r.machineId);
+      return ri < bi ? r : best;
+    });
+  };
 
   useEffect(() => {
-    if (machineNames.length > 0 && (!activeTab || !machineNames.includes(activeTab))) {
-      setActiveTab(machineNames[0]);
+    if (baseMachineKeys.length > 0 && (!activeTab || !baseMachineKeys.includes(activeTab))) {
+      setActiveTab(baseMachineKeys[0]);
     }
-  }, [machineNames, activeTab]);
+  }, [baseMachineKeys.join(","), activeTab]);
 
-  const currentTabRecipes = activeTab ? groupedRecipes[activeTab] || [] : [];
+  const currentTabRecipes = activeTab ? groupedByBase[activeTab] || [] : [];
   
   const filtered = currentTabRecipes.filter(
     (r) =>
@@ -165,7 +198,7 @@ export default function RecipePickerModal({
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="max-w-lg max-h-[80vh] flex flex-col"
+        className="max-w-lg max-h-[90vh] flex flex-col"
         style={{
           background: "#1e1e1e",
           border: "1px solid #2d2d2d",
@@ -173,29 +206,47 @@ export default function RecipePickerModal({
           fontFamily: "var(--font-geist-mono, monospace)",
         }}
       >
-        <DialogHeader>
-          <DialogTitle
-            style={{ color: "#e5e5e5", fontSize: 13, fontWeight: 700, letterSpacing: "0.02em" }}
-          >
-            Select Recipe
-          </DialogTitle>
-          <DialogDescription style={{ color: "#555", fontSize: 10 }}>
-            <span style={{ color: "#34d399", fontWeight: 700 }}>{itemName ?? itemId}</span>
-            {"  "}·{"  "}
-            ×{formatAmount(requestedAmount)} requested
-          </DialogDescription>
-        </DialogHeader>
+        {/* Fejléc – fix, nem shrinkelhető */}
+        <div style={{ flexShrink: 0 }}>
+          <DialogHeader>
+            <DialogTitle
+              style={{ color: "#e5e5e5", fontSize: 13, fontWeight: 700, letterSpacing: "0.02em" }}
+            >
+              Select Recipe
+            </DialogTitle>
+            <DialogDescription style={{ color: "#555", fontSize: 10 }}>
+              <span style={{ color: "#34d399", fontWeight: 700 }}>{itemName ?? itemId}</span>
+              {"  "}·{"  "}
+              ×{formatAmount(requestedAmount)} requested
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
-        {machineNames.length > 0 && (
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, borderBottom: "1px solid #2d2d2d", marginBottom: 8, scrollbarWidth: "thin" }}>
-            {machineNames.map(mName => {
-              const r = groupedRecipes[mName][0];
-              const isActive = activeTab === mName;
+        {/* Gépválasztó tab sor – fix magasság, soha nem shrinkelhető */}
+        {baseMachineKeys.length > 0 && (
+          <div style={{
+            flexShrink: 0,
+            display: "flex",
+            gap: 8,
+            overflowX: "auto",
+            overflowY: "hidden",
+            height: 56,
+            alignItems: "flex-start",
+            paddingTop: 2,
+            borderBottom: "1px solid #2d2d2d",
+            marginBottom: 8,
+            scrollbarWidth: "thin",
+            scrollbarColor: "#3a3a3a #1a1a1a",
+          }}>
+            {baseMachineKeys.map(base => {
+              const rep = lowestTierRepresentative(base);
+              const isActive = activeTab === base;
+              const count = groupedByBase[base].length;
               return (
                 <button
-                  key={mName}
-                  onClick={() => setActiveTab(mName)}
-                  title={mName}
+                  key={base}
+                  onClick={() => setActiveTab(base)}
+                  data-tooltip={`${rep.machineName}${count > 1 ? ` (+${count - 1} tier)` : ""}`}
                   style={{
                     width: 36,
                     height: 36,
@@ -209,6 +260,7 @@ export default function RecipePickerModal({
                     cursor: "pointer",
                     transition: "all 0.15s",
                     opacity: isActive ? 1 : 0.6,
+                    position: "relative",
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) {
@@ -224,34 +276,47 @@ export default function RecipePickerModal({
                   }}
                 >
                   <IconImage
-                    itemId={r.machineId || ""}
-                    itemName={mName}
-                    size={24}
+                    itemId={rep.machineId || ""}
+                    itemName={rep.machineName}
+                    size={34}
+                    textStyle={{ color: "#888", fontSize: 11, fontWeight: 700, fontFamily: "monospace" }}
                   />
+                  {/* Több tier jelvény */}
+                  {count > 1 && (
+                    <div style={{
+                      position: "absolute", bottom: 0, right: 0,
+                      background: "#34d399", color: "#000",
+                      fontSize: 6, fontWeight: 900, lineHeight: 1,
+                      padding: "1px 2px", borderRadius: "3px 0 4px 0",
+                    }}>{count}</div>
+                  )}
                 </button>
               );
             })}
           </div>
         )}
 
+        {/* Kereső – fix, nem shrinkelhető */}
         {recipes.length > 1 && (
-          <input
-            placeholder="Filter recipes in this tab..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            style={{
-              background: "#262626",
-              border: "1px solid #3a3a3a",
-              borderRadius: 6,
-              color: "#e5e5e5",
-              fontSize: 11,
-              padding: "6px 10px",
-              fontFamily: "inherit",
-              outline: "none",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          />
+          <div style={{ flexShrink: 0, marginBottom: 6 }}>
+            <input
+              placeholder="Filter recipes in this tab..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              style={{
+                background: "#262626",
+                border: "1px solid #3a3a3a",
+                borderRadius: 6,
+                color: "#e5e5e5",
+                fontSize: 11,
+                padding: "6px 10px",
+                fontFamily: "inherit",
+                outline: "none",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
         )}
 
         <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -333,18 +398,13 @@ export default function RecipePickerModal({
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{
-                        width: 26, height: 26, background: "#1c1917",
-                        border: "1.5px solid #57534e", borderRadius: 4,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        <IconImage 
-                          itemId={recipe.machineId || ""} 
-                          itemName={recipe.machineName || "M"} 
-                          size={26} 
-                          textStyle={{ color: "#a8a29e", fontSize: 10, fontWeight: 700, fontFamily: "monospace" }} 
-                        />
-                      </div>
+                    {/* Gép ikon keret nélkül */}
+                      <IconImage 
+                        itemId={recipe.machineId || ""} 
+                        itemName={recipe.machineName || "M"} 
+                        size={36} 
+                        textStyle={{ color: "#a8a29e", fontSize: 13, fontWeight: 700, fontFamily: "monospace" }} 
+                      />
                       <div style={{ display: "flex", flexDirection: "column" }}>
                         <span style={{ color: "#e5e5e5", fontWeight: 700, fontSize: 12 }}>
                           {recipe.machineName}
@@ -430,7 +490,7 @@ export default function RecipePickerModal({
                         <span style={{ color: inp.catalyst ? "#fb923c" : "#666", fontSize: 11, fontWeight: 700 }}>
                           {inp.itemId === "gtceu:programmed_circuit"
                             ? `Conf ${inp.amount}`
-                            : `×${formatAmount(inp.catalyst ? inp.amount : inp.amount * batchMultiplier)}`}
+                            : <>×{formatAmount(inp.catalyst ? inp.amount : inp.amount * batchMultiplier)}{(inp.itemType === "fluid" || inp.itemType === "gas") && <span style={{ fontSize: 8, opacity: 0.65, marginLeft: 2 }}>(mB)</span>}</>}
                         </span>
                       </div>
                     ))}

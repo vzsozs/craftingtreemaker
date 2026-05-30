@@ -13,13 +13,13 @@ export function IconImage({
   itemId, 
   itemName, 
   size, 
-  textStyle, 
+  textStyle = {}, 
   itemType 
 }: { 
   itemId: string, 
   itemName: string, 
   size: number, 
-  textStyle: React.CSSProperties, 
+  textStyle?: React.CSSProperties, 
   itemType?: string 
 }) {
   const [error, setError] = useState(0);
@@ -34,12 +34,22 @@ export function IconImage({
       if (itemType === "fluid") {
           src = `/icons/fluid__${itemId.replace(":", "__")}.png`;
       } else if (itemId.startsWith("gtceu:")) {
-          // Try appending lv_ for generic machines
-          src = `/icons/gtceu__lv_${itemId.substring(6)}.png`;
+          // Strip tier prefix (lv_, mv_, hv_, stb.) és lv_ fallbacket próbálunk
+          const TIERS = ["ulv_", "lv_", "mv_", "hv_", "ev_", "iv_", "luv_", "zpm_", "uv_", "uhv_"];
+          let baseName = itemId.substring(6); // pl. "mv_centrifuge"
+          for (const t of TIERS) {
+              if (baseName.startsWith(t)) {
+                  baseName = baseName.substring(t.length); // "centrifuge"
+                  break;
+              }
+          }
+          src = `/icons/gtceu__lv_${baseName}.png`; // "gtceu__lv_centrifuge.png"
       }
   }
   
-  const imgSize = size * 0.75; // leave some padding inside the slot
+  // Fluid/gas esetén teljesen kitölti a slotot, item esetén 75%-os padding marad
+  const isFluidOrGas = itemType === "fluid" || itemType === "gas";
+  const imgSize = isFluidOrGas ? size * 0.95 : size * 0.75;
   
   return (
     <img 

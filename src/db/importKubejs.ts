@@ -74,10 +74,17 @@ function parseRecipeFile(filePath: string) {
   const data = JSON.parse(content);
 
   const relPath = path.relative(dumpsDir, filePath).replace(/\\/g, '/');
-  const recipeId = "rec_" + crypto.createHash('md5').update(relPath).digest('hex').substring(0, 16);
+  // H-05 FIX: Teljes 32 karakteres MD5 hash használata ütközések elkerülésére (130k+ fájl)
+  const recipeId = "rec_" + crypto.createHash('md5').update(relPath).digest('hex');
   let type = data.type; 
   
   if (!type) return;
+
+  // H-07 FIX: Speciális crafting típusok kizárása – ezeknek nincs
+  // értelmes input/output listájuk, csak üres receptet generálnának.
+  if (type.startsWith("minecraft:crafting_special_")) return;
+  // Egyéb értelmezhetetlen/belső típusok kizárása:
+  if (type === "recipe_hint" || type === "minecraft:crafting_decorated_pot") return;
 
   let euPerTick = 0;
   if (data.tickInputs && data.tickInputs.eu && data.tickInputs.eu[0]) {
@@ -85,16 +92,19 @@ function parseRecipeFile(filePath: string) {
   }
   
   if (type.startsWith("gtceu:") && euPerTick > 0) {
-      let tier = "lv";
-      if (euPerTick > 8) tier = "lv";
-      if (euPerTick > 32) tier = "mv";
-      if (euPerTick > 128) tier = "hv";
-      if (euPerTick > 512) tier = "ev";
-      if (euPerTick > 2048) tier = "iv";
-      if (euPerTick > 8192) tier = "luv";
-      if (euPerTick > 32768) tier = "zpm";
-      if (euPerTick > 131072) tier = "uv";
-      if (euPerTick > 524288) tier = "uhv";
+      // GTCEu pontos Tier határok (>=):
+      // ULV: 1-7 | LV: 8-31 | MV: 32-127 | HV: 128-511 | EV: 512-2047
+      // IV: 2048-8191 | LuV: 8192-32767 | ZPM: 32768-131071 | UV: 131072-524287 | UHV: 524288+
+      let tier = "ulv";
+      if (euPerTick >= 8)      tier = "lv";
+      if (euPerTick >= 32)     tier = "mv";
+      if (euPerTick >= 128)    tier = "hv";
+      if (euPerTick >= 512)    tier = "ev";
+      if (euPerTick >= 2048)   tier = "iv";
+      if (euPerTick >= 8192)   tier = "luv";
+      if (euPerTick >= 32768)  tier = "zpm";
+      if (euPerTick >= 131072) tier = "uv";
+      if (euPerTick >= 524288) tier = "uhv";
       
       const machineName = type.substring(6);
       type = `gtceu:${tier}_${machineName}`;
@@ -105,8 +115,9 @@ function parseRecipeFile(filePath: string) {
   let machineId = type.split(":")[1] || type;
 
   const duration = data.duration || 100;
-  const isRemoved = filePath.includes("removed_recipes") || data.type === "recipe_hint";
-  if (isRemoved) return;
+  // H-08 FIX: removed_recipes path check eltávolítva (dead code volt,
+  // a scanDir sosem szkenneli azt a mappát). Csak a recipe_hint típust tartjuk.
+  if (data.type === "recipe_hint") return;
 
   const recInputs: any[] = [];
   const recOutputs: any[] = [];
@@ -178,15 +189,21 @@ function parseRecipeFile(filePath: string) {
   }
 
   if (data.ingredients) {
+      // H-06 FIX: Aggregáljuk az azonos itemeket ahelyett hogy külön
+      // bejegyzéseket hoznánk létre (pl. 9× bamboo → amount: 9, nem 9× amount: 1)
+      const shapelessCounts = new Map<string, number>();
       data.ingredients.forEach((ing: any) => {
          let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
          if (itemId) {
             const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
             if (!itemsToInsert.has(itemId)) itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
-          recInputs.push({ itemId, amount: 1, catalyst: false });
+            shapelessCounts.set(itemId, (shapelessCounts.get(itemId) ?? 0) + 1);
+         }
+      });
+      for (const [itemId, amount] of shapelessCounts.entries()) {
+         recInputs.push({ itemId, amount, catalyst: false });
       }
-  });
-}
+  }
 
   const handleParsedOutput = (outEntry: any, isFluid: boolean) => {
       if (outEntry && outEntry.itemId) {

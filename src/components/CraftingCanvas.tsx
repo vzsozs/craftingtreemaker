@@ -128,7 +128,10 @@ export default function CraftingCanvas() {
   function startTree(item: { id: string; name: string; type: "item" | "fluid" | "gas" }) {
     setRootItem(item);
     setRootSetup({ searching: false, results: [], query: "", focused: false });
-    setPendingChild({ parentNodeId: "ROOT", inputItemId: item.id, requestedAmount: targetAmount });
+    // Fix #5: fluid esetén minimum 1000mB (1 vödör) ha alacsonyabb lenne a cél
+    const effectiveAmount = item.type === "fluid" && targetAmount < 1000 ? 1000 : targetAmount;
+    if (item.type === "fluid" && targetAmount < 1000) setTargetAmount(1000);
+    setPendingChild({ parentNodeId: "ROOT", inputItemId: item.id, requestedAmount: effectiveAmount });
     setRecipeItemName(item.name);
     setRecipeModalOpen(true);
   }
@@ -262,24 +265,54 @@ export default function CraftingCanvas() {
 
   function handleTargetAmountChange(val: number) {
     setTargetAmount(val);
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (n.id === "node-root") {
-          const data = n.data as TreeNodeData;
-          const outputAmount =
-            data.outputs.find((o) => o.itemId === data.itemId)?.amount ?? 1;
-          return {
-            ...n,
-            data: {
-              ...data,
-              requestedAmount: val,
-              batchMultiplier: val / outputAmount,
-            },
-          };
+    setNodes((nds) => {
+      // H-12 FIX: Rekurzív cascade – frissítjük az egész fa
+      // requestedAmount és batchMultiplier értékét, nem csak a root node-ot.
+      // Él-modell: source=gyerek (termelő), target=szülő (fogyasztó)
+      // tehát egy node gyerekei: edges ahol target === nodeId → source értékek
+
+      const updatedNodes = nds.map((n) => ({ ...n, data: { ...n.data } }));
+
+      function updateNode(nodeId: string, requestedAmount: number) {
+        const nodeIndex = updatedNodes.findIndex((n) => n.id === nodeId);
+        if (nodeIndex === -1) return;
+
+        const data = updatedNodes[nodeIndex].data as TreeNodeData;
+        const outputAmount =
+          data.outputs.find((o) => o.itemId === data.itemId)?.amount ?? 1;
+        const newBatchMultiplier = requestedAmount / outputAmount;
+
+        updatedNodes[nodeIndex] = {
+          ...updatedNodes[nodeIndex],
+          data: {
+            ...data,
+            requestedAmount,
+            batchMultiplier: newBatchMultiplier,
+          },
+        };
+
+        // Megkeressük a gyerekeket (edges ahol target === nodeId)
+        const childEdges = edges.filter((e) => e.target === nodeId);
+        for (const edge of childEdges) {
+          // targetHandle: "input-{itemId}" – ebből kinyerjük melyik inputhoz tartozik
+          const inputItemId = edge.targetHandle?.replace("input-", "");
+          if (!inputItemId) continue;
+
+          const inputDef = data.inputs.find((i) => i.itemId === inputItemId);
+          if (!inputDef) continue;
+
+          // Katalizátor esetén a mennyiség fix, nem szorzódik
+          const childRequested = inputDef.catalyst
+            ? inputDef.amount
+            : inputDef.amount * newBatchMultiplier;
+
+          updateNode(edge.source, childRequested);
         }
-        return n;
-      })
-    );
+      }
+
+      updateNode("node-root", val);
+      return updatedNodes;
+    });
   }
 
   function resetTree() {
@@ -287,6 +320,7 @@ export default function CraftingCanvas() {
     setEdges([]);
     setRootItem(null);
     setTargetAmount(1);
+    setRootSetup({ searching: false, results: [], query: "", focused: false });
   }
 
   const showDropdown =
@@ -338,19 +372,26 @@ export default function CraftingCanvas() {
                 fontWeight: 600,
               }}
             >
-              Target Amount
+              {/* Fix #5: fluid esetén mB egységet mutatunk */}
+              Target Amount {rootItem?.type === "fluid" ? <span style={{ color: "#2563eb" }}>(mB)</span> : null}
             </label>
             <input
               type="number"
-              min={1}
+              min={rootItem?.type === "fluid" ? 1000 : 1}
+              step={rootItem?.type === "fluid" ? 1000 : 1}
               value={targetAmount}
-              onChange={(e) =>
-                handleTargetAmountChange(Math.max(1, parseInt(e.target.value) || 1))
-              }
+              onChange={(e) => {
+                const raw = parseInt(e.target.value) || 1;
+                // Fix #5: fluid esetén 1000-es lépésközre kerekítünk
+                const val = rootItem?.type === "fluid"
+                  ? Math.max(1000, Math.round(raw / 1000) * 1000)
+                  : Math.max(1, raw);
+                handleTargetAmountChange(val);
+              }}
               style={{
                 width: "100%",
                 background: "#262626",
-                border: "1px solid #3a3a3a",
+                border: `1px solid ${rootItem?.type === "fluid" ? "#1d4ed8" : "#3a3a3a"}`,
                 borderRadius: 6,
                 color: "#e5e5e5",
                 fontSize: 13,
@@ -361,6 +402,11 @@ export default function CraftingCanvas() {
                 boxSizing: "border-box",
               }}
             />
+            {rootItem?.type === "fluid" && (
+              <div style={{ fontSize: 8, color: "#2563eb", marginTop: 3, letterSpacing: "0.06em" }}>
+                {(targetAmount / 1000).toFixed(targetAmount % 1000 === 0 ? 0 : 3)}× bucket
+              </div>
+            )}
           </div>
 
           {/* Target item */}
@@ -558,7 +604,6 @@ export default function CraftingCanvas() {
           {[
             { label: "Solid item", color: "#6B7280" },
             { label: "Fluid",      color: "#3B82F6" },
-            { label: "Gas",        color: "#8B5CF6" },
           ].map(({ label, color }) => (
             <div
               key={label}

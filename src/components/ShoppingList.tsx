@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { buildShoppingList, formatAmount } from "@/lib/batchCalc";
 import type { TreeNodeData, ShoppingListEntry } from "@/lib/batchCalc";
+import { IconImage } from "@/components/IconImage";
 
 type ShoppingListProps = {
   nodes: TreeNodeData[];
@@ -17,13 +18,6 @@ const typeColors: Record<string, string> = {
 };
 
 function EntryRow({ entry }: { entry: ShoppingListEntry }) {
-  const initials = entry.itemName
-    .split(/[\s_:]+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase())
-    .slice(0, 2)
-    .join("");
-
   return (
     <div
       style={{
@@ -37,7 +31,7 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
       onMouseEnter={(e) => (e.currentTarget.style.background = "#252525")}
       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
     >
-      {/* mini slot */}
+      {/* mini slot – H-11 FIX: IconImage a puszta initials helyett */}
       <div
         style={{
           width: 28,
@@ -49,12 +43,20 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#888",
-          fontSize: 9,
-          fontWeight: 700,
         }}
       >
-        {initials}
+        <IconImage
+          itemId={entry.itemId}
+          itemName={entry.itemName}
+          size={28}
+          itemType={entry.itemType}
+          textStyle={{
+            color: "#888",
+            fontSize: 9,
+            fontWeight: 700,
+            fontFamily: "monospace",
+          }}
+        />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: "#ccc", fontSize: 10, fontWeight: 600, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -70,7 +72,7 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
           fontWeight: 700,
         }}
       >
-        ×{formatAmount(entry.isCatalyst ? 1 : entry.amount)}
+        ×{formatAmount(entry.isCatalyst ? 1 : entry.amount)}{(entry.itemType === "fluid" || entry.itemType === "gas") && <span style={{ fontSize: 9, opacity: 0.65, marginLeft: 2 }}>(mB)</span>}
       </div>
     </div>
   );
