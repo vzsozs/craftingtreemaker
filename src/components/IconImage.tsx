@@ -44,6 +44,41 @@ export function IconImage({
               }
           }
           src = `/icons/gtceu__lv_${baseName}.png`; // "gtceu__lv_centrifuge.png"
+      } else {
+          // Create, TFC, and other custom machines mapping fallback
+          const machineMapping: Record<string, string> = {
+              "create:mechanical_crafting": "create__mechanical_crafter.png",
+              "create:sequenced_assembly": "create__precision_mechanism.png",
+              "create:mixing": "create__mechanical_mixer.png",
+              "create:pressing": "create__mechanical_press.png",
+              "create:filling": "create__spout.png",
+              "create:deploying": "create__deployer.png",
+              "create:milling": "create__millstone.png",
+              "greate:compacting": "create__mechanical_press.png",
+              "greate:pressing": "create__mechanical_press.png",
+              "greate:mixing": "create__mechanical_mixer.png",
+              "tfc:anvil": "minecraft__anvil.png",
+              "tfc:heating": "minecraft__furnace.png",
+              "tfc:welding": "minecraft__anvil.png",
+              "minecraft:crafting_table": "minecraft__crafting_table.png",
+              "minecraft:stonecutting": "minecraft__stonecutter.png"
+          };
+          
+          if (machineMapping[itemId]) {
+              src = `/icons/${machineMapping[itemId]}`;
+          } else {
+              // Name based heuristic fallbacks
+              const lowerId = itemId.toLowerCase();
+              if (lowerId.includes("anvil")) {
+                  src = "/icons/minecraft__anvil.png";
+              } else if (lowerId.includes("furnace") || lowerId.includes("heating") || lowerId.includes("smelting") || lowerId.includes("oven")) {
+                  src = "/icons/minecraft__furnace.png";
+              } else if (lowerId.includes("mixer")) {
+                  src = "/icons/create__mechanical_mixer.png";
+              } else if (lowerId.includes("press")) {
+                  src = "/icons/create__mechanical_press.png";
+              }
+          }
       }
   }
   

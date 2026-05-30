@@ -71,11 +71,22 @@ const recipesToInsert: any[] = [];
 function parseRecipeFile(filePath: string) {
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const data = JSON.parse(content);
+  let data = JSON.parse(content);
 
-  const relPath = path.relative(dumpsDir, filePath).replace(/\\/g, '/');
+  let relPath = path.relative(dumpsDir, filePath).replace(/\\/g, '/');
+  if (relPath.startsWith("added_recipes/")) {
+      relPath = relPath.substring(14);
+  } else if (relPath.startsWith("recipes/")) {
+      relPath = relPath.substring(8);
+  }
   // H-05 FIX: Teljes 32 karakteres MD5 hash használata ütközések elkerülésére (130k+ fájl)
   const recipeId = "rec_" + crypto.createHash('md5').update(relPath).digest('hex');
+  
+  // tfc:damage_inputs_shapeless_crafting és hasonlók esetén kicsomagoljuk a belső receptet
+  if (data.recipe) {
+      data = data.recipe;
+  }
+
   let type = data.type; 
   
   if (!type) return;
@@ -91,6 +102,21 @@ function parseRecipeFile(filePath: string) {
       euPerTick = data.tickInputs.eu[0].content || 0;
   }
   
+  const craftingTypes = [
+      "minecraft:crafting_shaped",
+      "minecraft:crafting_shapeless",
+      "kubejs:shaped",
+      "kubejs:shapeless",
+      "gtceu:shaped",
+      "gtceu:shapeless",
+      "tfc:advanced_shaped_crafting",
+      "tfc:advanced_shapeless_crafting",
+      "tfc:damage_inputs_shaped_crafting",
+      "tfc:damage_inputs_shapeless_crafting",
+      "tfc:extra_products_shapeless_crafting",
+      "tfc:no_remainder_shaped_crafting"
+  ];
+
   if (type.startsWith("gtceu:") && euPerTick > 0) {
       // GTCEu pontos Tier határok (>=):
       // ULV: 1-7 | LV: 8-31 | MV: 32-127 | HV: 128-511 | EV: 512-2047
@@ -108,7 +134,7 @@ function parseRecipeFile(filePath: string) {
       
       const machineName = type.substring(6);
       type = `gtceu:${tier}_${machineName}`;
-  } else if (type === "minecraft:crafting_shaped" || type === "minecraft:crafting_shapeless") {
+  } else if (craftingTypes.includes(type)) {
       type = "minecraft:crafting_table";
   }
 
@@ -156,24 +182,24 @@ function parseRecipeFile(filePath: string) {
      }
   };
 
+  // Standard GTCEu inputs
   if (data.inputs?.item) data.inputs.item.forEach((i: any) => parseIngredient(i, false));
   if (data.inputs?.fluid) data.inputs.fluid.forEach((f: any) => parseIngredient(f, true));
 
-  if (data.type === "minecraft:crafting_shaped") {
+  // Pattern + Key bemenetek (crafting, mechanical crafting, kubejs:shaped stb.)
+  if (data.pattern && data.key) {
       const counts: Record<string, number> = {};
-      if (data.pattern) {
-          data.pattern.forEach((row: string) => {
-              for (const char of row) {
-                  if (char !== ' ') {
-                      counts[char] = (counts[char] || 0) + 1;
-                  }
+      data.pattern.forEach((row: string) => {
+          for (const char of row) {
+              if (char !== ' ') {
+                  counts[char] = (counts[char] || 0) + 1;
               }
-          });
-      }
-      if (data.key) {
-          for (const [k, ingData] of Object.entries(data.key)) {
-              const amount = counts[k] || 1;
-              const ing: any = Array.isArray(ingData) ? ingData[0] : ingData;
+          }
+      });
+      for (const [k, ingData] of Object.entries(data.key)) {
+          const amount = counts[k] || 1;
+          const ing: any = Array.isArray(ingData) ? ingData[0] : ingData;
+          if (ing) {
               let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
               if (itemId) {
                   const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
@@ -188,6 +214,54 @@ function parseRecipeFile(filePath: string) {
       }
   }
 
+  // tfc:anvil bemenet
+  if (data.input && !data.inputs) {
+      const ing = data.input;
+      let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
+      if (itemId) {
+          const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+          if (!itemsToInsert.has(itemId)) {
+              itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
+          }
+          recInputs.push({ itemId, amount: 1, catalyst: false });
+      }
+  }
+
+  // tfc:heating és sequenced_assembly fő bemenet
+  if (data.ingredient && !data.ingredients) {
+      const ing = data.ingredient;
+      let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
+      if (itemId) {
+          const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+          if (!itemsToInsert.has(itemId)) {
+              itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
+          }
+          recInputs.push({ itemId, amount: 1, catalyst: false });
+      }
+  }
+
+  // sequenced_assembly sequence lépések bemenetei
+  if (data.sequence) {
+      data.sequence.forEach((step: any) => {
+          if (step.ingredients) {
+              step.ingredients.forEach((ing: any, idx: number) => {
+                  if (idx > 0) { // A 0. indexű a transitional item, a többi a hozzáadott dolog
+                      let itemId = ing.item || (ing.tag ? resolveTag(ing.tag, "item") : null);
+                      if (itemId) {
+                          const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+                          if (!itemsToInsert.has(itemId)) {
+                              itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
+                          }
+                          const isCatalyst = step.keepHeldItem || false;
+                          recInputs.push({ itemId, amount: 1, catalyst: isCatalyst });
+                      }
+                  }
+              });
+          }
+      });
+  }
+
+  // Shapeless bemenetek (crafting_shapeless, create:mixing, tfc:advanced_shapeless_crafting stb.)
   if (data.ingredients) {
       // H-06 FIX: Aggregáljuk az azonos itemeket ahelyett hogy külön
       // bejegyzéseket hoznánk létre (pl. 9× bamboo → amount: 9, nem 9× amount: 1)
@@ -213,16 +287,51 @@ function parseRecipeFile(filePath: string) {
       }
   };
 
+  // Standard GTCEu outputs
   if (data.outputs?.item) data.outputs.item.forEach((i: any) => handleParsedOutput(parseOutput(i, false), false));
   if (data.outputs?.fluid) data.outputs.fluid.forEach((f: any) => handleParsedOutput(parseOutput(f, true), true));
 
+  // Standard vanilla result (tfc:advanced_shaped_crafting stack, string, nbt stb.)
   if (data.result) {
-      let itemId = typeof data.result === 'string' ? data.result : data.result.item;
-      let amount = data.result.count || 1;
+      let resultObj = data.result;
+      if (data.result.stack) {
+          resultObj = data.result.stack;
+      }
+      let itemId = typeof resultObj === 'string' ? resultObj : resultObj.item;
+      let amount = resultObj.count || 1;
       if (itemId) {
          const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
          if (!itemsToInsert.has(itemId)) itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "item", modId });
          recOutputs.push({ itemId, amount });
+      }
+  }
+
+  // Create modoknál results tömb
+  if (data.results) {
+      data.results.forEach((res: any) => {
+          let itemId = res.item || res.fluid;
+          let amount = res.count || res.amount || 1;
+          const isFluid = !!res.fluid;
+          if (itemId) {
+              const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+              if (!itemsToInsert.has(itemId)) {
+                  itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: isFluid ? "fluid" : "item", modId });
+              }
+              recOutputs.push({ itemId, amount });
+          }
+      });
+  }
+
+  // tfc:heating result_fluid kimenet
+  if (data.result_fluid) {
+      let itemId = data.result_fluid.fluid;
+      let amount = data.result_fluid.amount || 1000;
+      if (itemId) {
+          const modId = itemId.includes(':') ? itemId.split(':')[0] : 'minecraft';
+          if (!itemsToInsert.has(itemId)) {
+              itemsToInsert.set(itemId, { id: itemId, name: toHumanReadable(itemId), type: "fluid", modId });
+          }
+          recOutputs.push({ itemId, amount });
       }
   }
 
@@ -235,6 +344,7 @@ function parseRecipeFile(filePath: string) {
     outputs: recOutputs,
   });
 }
+
 
 async function main() {
   console.log("Clearing old data...");
