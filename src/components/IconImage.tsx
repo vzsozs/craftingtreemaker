@@ -24,7 +24,7 @@ export function IconImage({
 }) {
   const [error, setError] = useState(0);
   
-  if (error > 1 || !itemId) {
+  if (error > 2 || !itemId) {
     return <span style={textStyle}>{getInitials(itemName)}</span>;
   }
   
@@ -61,7 +61,10 @@ export function IconImage({
               "tfc:heating": "minecraft__furnace.png",
               "tfc:welding": "minecraft__anvil.png",
               "minecraft:crafting_table": "minecraft__crafting_table.png",
-              "minecraft:stonecutting": "minecraft__stonecutter.png"
+              "minecraft:stonecutting": "minecraft__stonecutter.png",
+              "vintageimprovements:vacuumizing": "vintageimprovements__vacuum_chamber.png",
+              "tfg:artisan": "tfg__artisan_table.png",
+              "tfg:artisan_table": "tfg__artisan_table.png"
           };
           
           if (machineMapping[itemId]) {
@@ -79,6 +82,23 @@ export function IconImage({
                   src = "/icons/create__mechanical_press.png";
               }
           }
+      }
+  }
+
+  // Ha a második próbálkozás (pl. gtceu__lv_distillation_tower.png) is elbukik (error === 2),
+  // akkor megpróbáljuk a teljesen tier előtag nélküli változatot (pl. gtceu__distillation_tower.png),
+  // ami a multiblokk gépeknél a helyes ikon.
+  if (error === 2) {
+      if (itemId.startsWith("gtceu:")) {
+          const TIERS = ["ulv_", "lv_", "mv_", "hv_", "ev_", "iv_", "luv_", "zpm_", "uv_", "uhv_"];
+          let baseName = itemId.substring(6);
+          for (const t of TIERS) {
+              if (baseName.startsWith(t)) {
+                  baseName = baseName.substring(t.length);
+                  break;
+              }
+          }
+          src = `/icons/gtceu__${baseName}.png`;
       }
   }
   
