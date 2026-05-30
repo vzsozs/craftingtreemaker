@@ -30,9 +30,28 @@ Mivel sok alapanyagnak több előállítási módja is van (pl. Asbestos Dust ki
 - **Egységes Output design:** Kezdetben a kimenetek csak egyszerű színes pöttyökként jelentek meg. Ezt továbbfejlesztettük, így a recept választóban a kimenetek most már pontosan ugyanolyan kis 26x26 pixeles, keretes `ItemMiniSlot` ikonokként látszanak, mint a bemenetek.
 - **Dinamikus Batch kalkuláció:** A modal menet közben kiszámolja, hogy a kért mennyiség alapján hány "batch" (adag) szükséges az adott receptből, és a szükséges bemeneteket is felszorozza a megjelenítésnél.
 
-## 5. Kiegészítő Funkciók
+## 5. Kiegészítő és Optimalizálási Funkciók
 - **Shopping List (Bevásárlólista):** Összesíti a fa alján lévő "nyersanyagokat" (olyan itemek, amelyeknek már nincs további bontott receptje a fában), és egy jól áttekinthető listában mutatja meg, miből mennyit kell összeszedni a teljes lánc megépítéséhez.
 - **Jegyzetelő (Note Editor):** Lehetőség van a fában lévő csomópontokhoz egyedi szöveges megjegyzéseket fűzni egy felugró ablak segítségével, amely aztán megjelenik a node felületén.
+- **Optimalizált PostgreSQL API:** A helyi SQLite helyett Docker alapú PostgreSQL adatbázist használunk. Az API útvonalat (`/api/recipes`) SQL JSONB és `inArray()` alapú szűrésekkel teljesen átírtuk. A korábbi kliens oldali szűrés helyett a szűrések immár közvetlenül a PostgreSQL adatbázisban futnak le, ami töredékére csökkentette az API válaszidőket.
 
-## Összegzés
-A rendszer magja (adatbázis modell, rekurzív KubeJS importálás, ReactFlow canvas, dinamikus receptválasztás, UI komponensek) stabilan és hatékonyan működik. A komplex GTCEu láncok (mint pl. a Bakelite gyártás) vizualizálása automatikussá és könnyen nyomonkövethetővé vált.
+## 6. Create, TFC és Egyedi Mod-specifikus Receptek Támogatása (ÚJ)
+Korábban az alkalmazás csak a GTCEu és az alap Minecraft recepteket dolgozta fel megfelelően. A beolvasási rendszert sikeresen kiterjesztettük az összes többi mod-specifikus receptre:
+- **Create Mod teljes támogatása:** Feldolgozzuk a `mechanical_crafting` (pl. a *Biplane* receptjét), a `sequenced_assembly` (sorozat-összeszerelés, beolvasva a fő alapanyagot és a köztes lépések bemeneteit), valamint a `mixing`, `pressing`, `filling`, `deploying` és `milling` recepteket is a Create `results` tömbjeinek és bemeneteinek intelligens parsolásával.
+- **TerraFirmaCraft (TFC) és KubeJS támogatás:** Parsoljuk a TFC `anvil` (kovácsolás), `heating` (folyadékká hevítés), `welding` (hegesztés) és egyéb egyedi receptjeit.
+- **Belső receptek kicsomagolása:** Az importáló script automatikusan kicsomagolja a belső `.recipe` kulcsokat (pl. a `tfc:damage_inputs_shapeless_crafting` esetén).
+- **Mappák közötti duplikáció-szűrés:** Az `added_recipes/` és `recipes/` könyvtárak normalizálásával és a fájlok prefix-mentes hash-elésével teljesen megszüntettük az azonos receptek duplikálását az adatbázisban (pl. az *Alternator* receptje most már csak egyszer szerepel).
+- **Crafting Table egységesítés:** Az összes egyedi vanilla-szerű barkácsolást (pl. `gtceu:shaped`, `kubejs:shaped`, `tfc:advanced_shaped_crafting`) automatikusan a `minecraft:crafting_table` (Crafting Table) gép alá rendeli a rendszer a korábbi zavaró "Shaped" fiktív gépnév helyett.
+- **Sikeres Adatbázis Feltöltés:** A script sikeresen beolvasott és feltöltött **134,892** érvényes receptet és **27,297** egyedi terméket a PostgreSQL adatbázisba.
+
+## 7. Intelligens Fallback Ikon Rendszer és Globális Tooltipek (ÚJ)
+- **Explicit Gép-leképzések:** Bevezettünk egy leképző listát a speciális gépek ikonjaira, így pl. a `create:mechanical_crafting` a `create__mechanical_crafter.png` ikonnal, a `vintageimprovements:vacuumizing` a `vintageimprovements__vacuum_chamber.png` (vákuumkamra) ikonnal, míg a `tfg:artisan` a `tfg__artisan_table.png` munkaasztal ikonnal jelenik meg.
+- **GTCEu Multiblokk Fallback:** Kialakítottunk egy háromszintű hibakezelést. Ha a gép eredeti be-tier-elt ikonja, illetve az `lv_` előtagú fallback ikonja sem létezik (ami a multiblokkokra jellemző, pl. *Distillation Tower*, *Large Chemical Reactor*, *Vacuum Freezer*), a rendszer automatikusan megpróbálja betölteni a teljesen tier-mentes ikont (pl. `gtceu__distillation_tower.png`).
+- **Globális Tooltipek:** Elkészítettünk egy dokumentum szintű, abszolút pozicionálású tooltip-rendszert, amely kiküszöböli azt a hibát, hogy a RecipePickerModal görgetősávja eltakarná vagy levágná a gépválasztó tooltip buborékait.
+
+## 8. Git push és Mentéskezelés (ÚJ)
+- **GitHub push:** A legutóbbi UI csiszolásokat, tooltip-rendszert és hibajavításokat a felhasználó kérésére sikeresen feltöltöttük a távoli GitHub repóba.
+- **Verziókövetés tisztasága:** A lokális git státusz folyamatosan karban van tartva a változtatásokkal. A felhasználó kérésének megfelelően a GitHub-os szinkronizálást kizárólag explicit kérésre indítjuk el.
+
+## Hol tartunk most és Összegzés
+A projekt jelenlegi állapota rendkívül stabil és érett. A backend PostgreSQL adatbázis a teljes 134k+ receptes TerraFirmaGreg modpack receptkészletével fel van töltve, villámgyorsan válaszol az API kérésekre, és a legbonyolultabb Create vagy TFC gyártósorok (pl. *Biplane*, *Alternator*) is hibátlanul, duplikációmentesen, gyönyörű gépikonokkal és megnevezésekkel jelennek meg a felületen. A vizuális fa tervező és az alapanyag bevásárlólista teljesen használatra kész!
