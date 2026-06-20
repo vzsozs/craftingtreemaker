@@ -33,6 +33,37 @@ function getIconCandidates(itemId: string, itemType?: string): string[] {
     ns = ns.substring(1);
   }
 
+  // Tag fallback candidates based on category words (e.g. for #mcw_tfc_aio:metal_rods)
+  if (itemId.startsWith("#")) {
+    const lowerId = itemId.toLowerCase();
+    if (lowerId.includes("rods") || lowerId.includes("rod")) {
+      candidates.push("/icons/gtceu__iron_rod.png");
+      candidates.push("/icons/minecraft__stick.png");
+    } else if (lowerId.includes("plates") || lowerId.includes("plate") || lowerId.includes("sheets") || lowerId.includes("sheet")) {
+      candidates.push("/icons/gtceu__iron_plate.png");
+    } else if (lowerId.includes("ingots") || lowerId.includes("ingot")) {
+      candidates.push("/icons/minecraft__iron_ingot.png");
+    } else if (lowerId.includes("nuggets") || lowerId.includes("nugget")) {
+      candidates.push("/icons/minecraft__gold_nugget.png");
+    } else if (lowerId.includes("gears") || lowerId.includes("gear")) {
+      candidates.push("/icons/gtceu__iron_gear.png");
+    } else if (lowerId.includes("dusts") || lowerId.includes("dust")) {
+      candidates.push("/icons/gtceu__iron_dust.png");
+    } else if (lowerId.includes("wires") || lowerId.includes("wire")) {
+      candidates.push("/icons/gtceu__copper_single_wire.png");
+    } else if (lowerId.includes("cables") || lowerId.includes("cable")) {
+      candidates.push("/icons/gtceu__copper_single_cable.png");
+    } else if (lowerId.includes("gems") || lowerId.includes("gem")) {
+      candidates.push("/icons/minecraft__diamond.png");
+    } else if (lowerId.includes("ores") || lowerId.includes("ore")) {
+      candidates.push("/icons/minecraft__iron_ore.png");
+    } else if (lowerId.includes("logs") || lowerId.includes("log")) {
+      candidates.push("/icons/minecraft__oak_log.png");
+    } else if (lowerId.includes("planks") || lowerId.includes("plank")) {
+      candidates.push("/icons/minecraft__oak_planks.png");
+    }
+  }
+
   // Common Tiers to strip
   const TIERS = ["ulv_", "lv_", "mv_", "hv_", "ev_", "iv_", "luv_", "zpm_", "uv_", "uhv_"];
   let baseName = path;

@@ -70,6 +70,7 @@ type PendingChild = {
   parentNodeId: string;
   inputItemId: string;
   requestedAmount: number;
+  itemType: "item" | "fluid" | "gas";
 };
 
 type RootSetup = {
@@ -341,7 +342,7 @@ export default function CraftingCanvas() {
     // Fix #5: fluid esetén minimum 1000mB (1 vödör) ha alacsonyabb lenne a cél
     const effectiveAmount = item.type === "fluid" && targetAmount < 1000 ? 1000 : targetAmount;
     if (item.type === "fluid" && targetAmount < 1000) setTargetAmount(1000);
-    setPendingChild({ parentNodeId: "ROOT", inputItemId: item.id, requestedAmount: effectiveAmount });
+    setPendingChild({ parentNodeId: "ROOT", inputItemId: item.id, requestedAmount: effectiveAmount, itemType: item.type });
     setRecipeItemName(item.name);
     setRecipeModalOpen(true);
   }
@@ -457,8 +458,9 @@ export default function CraftingCanvas() {
       const nodeData = node?.data as TreeNodeData | undefined;
       const inputInfo = nodeData?.inputs.find((i) => i.itemId === inputItemId);
       const name = inputInfo?.itemName ?? inputItemId;
+      const type = inputInfo?.itemType ?? "item";
 
-      setPendingChild({ parentNodeId: nodeId, inputItemId, requestedAmount });
+      setPendingChild({ parentNodeId: nodeId, inputItemId, requestedAmount, itemType: type });
       setRecipeItemName(name);
       setRecipeModalOpen(true);
     },
@@ -542,7 +544,14 @@ export default function CraftingCanvas() {
 
       if (!sourceItemId || !expectedItemId) return false;
 
-      return sourceItemId === expectedItemId;
+      if (sourceItemId === expectedItemId) return true;
+
+      // Allow connecting any concrete item to a tag handle
+      if (expectedItemId.startsWith("#") && !sourceItemId.startsWith("#")) {
+        return true;
+      }
+
+      return false;
     },
     []
   );
@@ -1168,6 +1177,7 @@ export default function CraftingCanvas() {
         open={recipeModalOpen}
         itemId={pendingChild?.inputItemId ?? null}
         itemName={recipeItemName}
+        itemType={pendingChild?.itemType ?? "item"}
         requestedAmount={pendingChild?.requestedAmount ?? 1}
         onSelect={(recipe, nodeData) => {
           if (pendingChild) {

@@ -19,30 +19,7 @@ function toHumanReadable(id: string): string {
 }
 
 function resolveTag(tag: string, type: "item" | "fluid" = "item"): string | null {
-  if (tagCache.has(tag)) {
-    const cached = tagCache.get(tag);
-    return cached && cached.length > 0 ? cached[0] : null;
-  }
-
-  const parts = tag.split(":");
-  if (parts.length < 2) return null;
-  const namespace = parts[0];
-  const tagPath = parts[1];
-
-  const baseDir = type === "item" ? tagsDir : fluidTagsDir;
-  const jsonPath = path.join(baseDir, namespace, `${tagPath}.json`);
-
-  if (fs.existsSync(jsonPath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-      if (Array.isArray(data)) {
-        tagCache.set(tag, data);
-        const gtceu = data.find(id => id.startsWith("gtceu:"));
-        return gtceu || data[0];
-      }
-    } catch (e) {}
-  }
-  return null;
+  return `#` + tag;
 }
 
 const parseOutput = (outData: any, isFluid: boolean) => {

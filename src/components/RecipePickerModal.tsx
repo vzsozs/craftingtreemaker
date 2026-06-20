@@ -36,6 +36,7 @@ type RecipePickerModalProps = {
   open: boolean;
   itemId: string | null;
   itemName: string | null;
+  itemType?: "item" | "fluid" | "gas";
   requestedAmount: number;
   onSelect: (recipe: EnrichedRecipe, nodeData: Partial<TreeNodeData>) => void;
   onClose: () => void;
@@ -104,6 +105,7 @@ export default function RecipePickerModal({
   open,
   itemId,
   itemName,
+  itemType = "item",
   requestedAmount,
   onSelect,
   onClose,
@@ -113,19 +115,69 @@ export default function RecipePickerModal({
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<string | null>(null);
 
+  // Tag resolution and item substitution state
+  const [localItemId, setLocalItemId] = useState<string | null>(null);
+  const [localItemName, setLocalItemName] = useState<string | null>(null);
+  const [resolvedTagItems, setResolvedTagItems] = useState<any[]>([]);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchingGlobal, setSearchingGlobal] = useState(false);
+
+  // Sync props to local state on open or change
   useEffect(() => {
-    if (!itemId || !open) return;
+    setLocalItemId(itemId);
+    setLocalItemName(itemName);
+    setResolvedTagItems([]);
+    setSearchQuery("");
+    setSearchResults([]);
+  }, [itemId, itemName, open]);
+
+  // Global database search debounce
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResults([]);
+      return;
+    }
+    const delayDebounce = setTimeout(() => {
+      setSearchingGlobal(true);
+      fetch(`/api/items?q=${encodeURIComponent(searchQuery)}`)
+        .then((r) => r.json())
+        .then((data) => setSearchResults(data))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearchingGlobal(false));
+    }, 250);
+
+    return () => clearTimeout(delayDebounce);
+  }, [searchQuery]);
+
+  // Fetch recipes or resolve tag based on localItemId
+  useEffect(() => {
+    if (!localItemId || !open) return;
+
+    if (localItemId.startsWith("#")) {
+      setRecipes([]);
+      setTagLoading(true);
+      fetch(`/api/tags/resolve?tagId=${encodeURIComponent(localItemId)}&type=${itemType}`)
+        .then((r) => r.json())
+        .then((data) => setResolvedTagItems(data))
+        .catch(() => setResolvedTagItems([]))
+        .finally(() => setTagLoading(false));
+      return;
+    }
+
     requestAnimationFrame(() => {
       setLoading(true);
       setFilter("");
     });
-    fetch(`/api/recipes?itemId=${encodeURIComponent(itemId)}`)
+    fetch(`/api/recipes?itemId=${encodeURIComponent(localItemId)}`)
       .then((r) => r.json())
       .then((data) => setRecipes(data))
+      .catch(() => setRecipes([]))
       .finally(() => {
         requestAnimationFrame(() => setLoading(false));
       });
-  }, [itemId, open]);
+  }, [localItemId, open, itemType]);
 
   // #2 fix: base machine szerint csoportosítunk (tier nélkül)
   // Pl. gtceu:lv_centrifuge és gtceu:mv_centrifuge → "gtceu:centrifuge" csoportba kerülnek
@@ -172,13 +224,13 @@ export default function RecipePickerModal({
   );
 
   function handleSelect(recipe: EnrichedRecipe) {
-    const outputEntry = recipe.outputs.find((o) => o.itemId === itemId);
+    const outputEntry = recipe.outputs.find((o) => o.itemId === localItemId);
     const outputAmount = outputEntry?.amount ?? 1;
     const batchMultiplier = requestedAmount / outputAmount;
 
     const nodeData: Partial<TreeNodeData> = {
-      itemId: itemId!,
-      itemName: itemName!,
+      itemId: localItemId!,
+      itemName: localItemName!,
       itemType: outputEntry?.itemType ?? "item",
       recipeId: recipe.id,
       machineId: recipe.machineId,
@@ -212,10 +264,33 @@ export default function RecipePickerModal({
             >
               Select Recipe
             </DialogTitle>
-            <DialogDescription style={{ color: "#555", fontSize: 10 }}>
-              <span style={{ color: "#34d399", fontWeight: 700 }}>{itemName ?? itemId}</span>
-              {"  "}·{"  "}
-              ×{formatAmount(requestedAmount)} requested
+            <DialogDescription style={{ color: "#555", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div>
+                <span style={{ color: "#34d399", fontWeight: 700 }}>{localItemName ?? localItemId}</span>
+                {"  "}·{"  "}
+                ×{formatAmount(requestedAmount)} requested
+              </div>
+              {itemId && itemId.startsWith("#") && localItemId !== itemId && (
+                <button
+                  onClick={() => {
+                    setLocalItemId(itemId);
+                    setLocalItemName(itemName);
+                  }}
+                  style={{
+                    background: "rgba(59,130,246,0.1)",
+                    border: "1px solid rgba(59,130,246,0.25)",
+                    borderRadius: 4,
+                    color: "#60a5fa",
+                    fontSize: 8,
+                    padding: "2px 6px",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontWeight: 700,
+                  }}
+                >
+                  ↩ Back to Tag
+                </button>
+              )}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -318,20 +393,143 @@ export default function RecipePickerModal({
         )}
 
         <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-          {loading && (
+          {/* Tag resolution interface */}
+          {localItemId && localItemId.startsWith("#") && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "4px 0" }}>
+              <div style={{ background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)", borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 10, color: "#93c5fd", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Tag Ingredient Detected
+                </div>
+                <div style={{ fontSize: 11, color: "#ccc", wordBreak: "break-all" }}>
+                  This requires any item matching the tag: <code style={{ color: "#60a5fa", fontWeight: 700, fontFamily: "monospace" }}>{localItemId}</code>
+                </div>
+              </div>
+
+              {/* Tag items list */}
+              <div>
+                <div style={{ fontSize: 9, color: "#555", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+                  Select variations to craft:
+                </div>
+
+                {tagLoading && (
+                  <div style={{ fontSize: 10, color: "#666", padding: "16px 0", textAlign: "center" }}>
+                    Resolving items for tag...
+                  </div>
+                )}
+
+                {!tagLoading && resolvedTagItems.length === 0 && (
+                  <div style={{ fontSize: 10, color: "#e11d48", padding: "8px 12px", background: "rgba(225,29,72,0.05)", border: "1px solid rgba(225,29,72,0.15)", borderRadius: 6, marginBottom: 8 }}>
+                    Could not automatically resolve any items under this tag. Please search database below to manually select an item.
+                  </div>
+                )}
+
+                {!tagLoading && resolvedTagItems.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, maxHeight: 180, overflowY: "auto", paddingRight: 4, scrollbarWidth: "thin" }}>
+                    {resolvedTagItems.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setLocalItemId(item.id);
+                          setLocalItemName(item.name);
+                        }}
+                        style={{
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          background: "#262626",
+                          border: "1px solid #3a3a3a",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontFamily: "inherit",
+                          transition: "all 0.12s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#2d2d2d";
+                          e.currentTarget.style.borderColor = "#34d399";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#262626";
+                          e.currentTarget.style.borderColor = "#3a3a3a";
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 24,
+                            height: 24,
+                            flexShrink: 0,
+                            background: "#1a1a1a",
+                            border: `1px solid ${item.type === "fluid" ? "#2563eb" : "#3a3a3a"}`,
+                            borderRadius: 4,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <IconImage itemId={item.id} itemName={item.name} size={24} itemType={item.type} />
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ color: "#e5e5e5", fontSize: 10, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {item.name}
+                          </div>
+                          <div style={{ color: "#444", fontSize: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {item.id}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+
+
+              {/* Add raw material button */}
+              <div style={{ borderTop: "1px solid #2d2d2d", paddingTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => {
+                    const nodeData: Partial<TreeNodeData> = {
+                      itemId: localItemId!, itemName: localItemName!, itemType: "item",
+                      recipeId: null, machineId: null, machineName: null,
+                      requestedAmount, batchMultiplier: 1, inputs: [], outputs: [], notes: null,
+                    };
+                    onSelect({} as EnrichedRecipe, nodeData);
+                    onClose();
+                  }}
+                  style={{
+                    background: "rgba(161,98,7,0.08)",
+                    border: "1px solid rgba(161,98,7,0.25)",
+                    borderRadius: 6,
+                    color: "#d97706",
+                    padding: "6px 12px",
+                    fontSize: 9,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    fontWeight: 700,
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  ⛏ Add tag as raw material
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!localItemId?.startsWith("#") && loading && (
             <div style={{ textAlign: "center", color: "#444", padding: "32px 0", fontSize: 11 }}>
               Loading recipes...
             </div>
           )}
 
-          {!loading && filtered.length === 0 && (
+          {!localItemId?.startsWith("#") && !loading && filtered.length === 0 && (
             <div style={{ textAlign: "center", color: "#444", padding: "32px 0" }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
               <div style={{ fontSize: 10, marginBottom: 12 }}>No recipes found</div>
               <button
                 onClick={() => {
                   const nodeData: Partial<TreeNodeData> = {
-                    itemId: itemId!, itemName: itemName!, itemType: "item",
+                    itemId: localItemId!, itemName: localItemName!, itemType: "item",
                     recipeId: null, machineId: null, machineName: null,
                     requestedAmount, batchMultiplier: 1, inputs: [], outputs: [], notes: null,
                   };
@@ -355,9 +553,9 @@ export default function RecipePickerModal({
             </div>
           )}
 
-          {!loading &&
+          {!localItemId?.startsWith("#") && !loading &&
             filtered.map((recipe) => {
-              const outputEntry = recipe.outputs.find((o) => o.itemId === itemId);
+              const outputEntry = recipe.outputs.find((o) => o.itemId === localItemId);
               const outputAmount = outputEntry?.amount ?? 1;
               const batchMultiplier = requestedAmount / outputAmount;
               const durationSec = (recipe.durationTicks / 20).toFixed(1);
@@ -481,7 +679,7 @@ export default function RecipePickerModal({
                                 textTransform: "uppercase",
                               }}
                             >
-                              cat
+                               cat
                             </span>
                           )}
                         </div>
@@ -524,9 +722,9 @@ export default function RecipePickerModal({
                             <ItemMiniSlot itemId={out.itemId} itemName={out.itemName} type={out.itemType} />
                             <span
                               style={{
-                                color: out.itemId === itemId ? "#34d399" : "#888",
+                                color: out.itemId === localItemId ? "#34d399" : "#888",
                                 fontSize: 10,
-                                fontWeight: out.itemId === itemId ? 700 : 400,
+                                fontWeight: out.itemId === localItemId ? 700 : 400,
                               }}
                             >
                               {out.itemName}
