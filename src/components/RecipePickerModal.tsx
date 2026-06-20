@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -47,19 +47,6 @@ const typeColors: Record<string, string> = {
   gas:   "#7c3aed",
 };
 
-function TypeDot({ type }: { type: string }) {
-  return (
-    <div
-      style={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        background: typeColors[type] ?? "#555",
-        flexShrink: 0,
-      }}
-    />
-  );
-}
 
 function ItemMiniSlot({ itemId, itemName, type }: { itemId: string; itemName: string; type: string }) {
   return (
@@ -128,25 +115,34 @@ export default function RecipePickerModal({
 
   useEffect(() => {
     if (!itemId || !open) return;
-    setLoading(true);
-    setFilter("");
+    requestAnimationFrame(() => {
+      setLoading(true);
+      setFilter("");
+    });
     fetch(`/api/recipes?itemId=${encodeURIComponent(itemId)}`)
       .then((r) => r.json())
       .then((data) => setRecipes(data))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        requestAnimationFrame(() => setLoading(false));
+      });
   }, [itemId, open]);
 
   // #2 fix: base machine szerint csoportosítunk (tier nélkül)
   // Pl. gtceu:lv_centrifuge és gtceu:mv_centrifuge → "gtceu:centrifuge" csoportba kerülnek
-  const groupedByBase = recipes.reduce((acc, r) => {
-    const base = getBaseMachineId(r.machineId || "unknown");
-    if (!acc[base]) acc[base] = [];
-    acc[base].push(r);
-    return acc;
-  }, {} as Record<string, EnrichedRecipe[]>);
+  const groupedByBase = useMemo(() => {
+    return recipes.reduce((acc, r) => {
+      const base = getBaseMachineId(r.machineId || "unknown");
+      if (!acc[base]) acc[base] = [];
+      acc[base].push(r);
+      return acc;
+    }, {} as Record<string, EnrichedRecipe[]>);
+  }, [recipes]);
 
   // Minden base-csoportból a legkisebb tier-ű recept az ikon és a gomb reprezentánsa
-  const baseMachineKeys = Object.keys(groupedByBase).sort();
+  const baseMachineKeys = useMemo(() => {
+    return Object.keys(groupedByBase).sort();
+  }, [groupedByBase]);
+
   const lowestTierRepresentative = (base: string): EnrichedRecipe => {
     const group = groupedByBase[base];
     return group.reduce((best, r) => {
@@ -158,9 +154,11 @@ export default function RecipePickerModal({
 
   useEffect(() => {
     if (baseMachineKeys.length > 0 && (!activeTab || !baseMachineKeys.includes(activeTab))) {
-      setActiveTab(baseMachineKeys[0]);
+      requestAnimationFrame(() => {
+        setActiveTab(baseMachineKeys[0]);
+      });
     }
-  }, [baseMachineKeys.join(","), activeTab]);
+  }, [baseMachineKeys, activeTab]);
 
   const currentTabRecipes = activeTab ? groupedByBase[activeTab] || [] : [];
   

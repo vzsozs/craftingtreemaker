@@ -11,6 +11,8 @@ type ShoppingListProps = {
   edges: Edge[];
   targetItemName: string | null;
   targetAmount: number;
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  onSelectNode?: (nodeId: string) => void;
 };
 
 const typeColors: Record<string, string> = {
@@ -94,8 +96,238 @@ function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text);
 }
 
-export default function ShoppingList({ nodes, edges, targetItemName, targetAmount }: ShoppingListProps) {
+// Recursive tree node component for the visual machine pipeline
+function PipelineTreeNode({
+  mNode,
+  nodes,
+  edges,
+  onSelectNode,
+  visited = new Set(),
+}: {
+  mNode: TreeNodeData;
+  nodes: TreeNodeData[];
+  edges: Edge[];
+  onSelectNode?: (nodeId: string) => void;
+  visited?: Set<string>;
+}) {
+  if (visited.has(mNode.id)) {
+    return (
+      <div style={{
+        background: "#161616",
+        border: "1px dashed #444",
+        borderRadius: 6,
+        padding: "4px 8px",
+        fontSize: 8,
+        color: "#666",
+        fontFamily: "var(--font-geist-mono, monospace)"
+      }}>
+        ↺ {mNode.machineName} (feljebb)
+      </div>
+    );
+  }
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(mNode.id);
+
+  const childrenRaw = mNode.isLockedRaw
+    ? []
+    : edges
+        .filter((e) => e.target === mNode.id)
+        .map((e) => nodes.find((n) => n.id === e.source))
+        .filter((n): n is TreeNodeData => !!n && n.machineId !== null);
+
+  // Deduplicate children by ID to avoid rendering duplicate elements under the same node
+  const children = Array.from(new Map(childrenRaw.map(c => [c.id, c])).values());
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
+      {/* The Machine Card */}
+      <div
+        onClick={() => onSelectNode?.(mNode.id)}
+        style={{
+          background: mNode.isLockedRaw ? "#11221a" : "#1e1e1e",
+          border: mNode.isLockedRaw ? "1.5px solid #10b981" : "1px solid #282828",
+          borderRadius: 6,
+          padding: "4px 6px",
+          minWidth: 90,
+          maxWidth: 120,
+          textAlign: "center",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+          cursor: "pointer",
+          transition: "border-color 0.12s, transform 0.12s, background-color 0.12s",
+          userSelect: "none",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#3b82f6";
+          e.currentTarget.style.transform = "scale(1.03)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = mNode.isLockedRaw ? "#10b981" : "#282828";
+          e.currentTarget.style.transform = "scale(1)";
+        }}
+        title={`Click to focus in canvas\n${mNode.machineName ?? "Crafting"}`}
+      >
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          {/* Machine Icon - 3x of 12 = 36 */}
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              background: "#111",
+              border: "1px solid #333",
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <IconImage itemId={mNode.machineId ?? "minecraft:crafting_table"} itemName={mNode.machineName ?? "Crafting"} size={36} />
+          </div>
+          
+          {/* Machine Name */}
+          <div
+            style={{
+              color: "#fff",
+              fontSize: 7,
+              fontWeight: 700,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+              textAlign: "center",
+              fontFamily: "var(--font-geist-sans), sans-serif",
+            }}
+          >
+            {mNode.machineName}
+          </div>
+        </div>
+
+        {/* Output Item & Amount (Icon size: 4x of 8 = 32) */}
+        <div
+          style={{
+            marginTop: 4,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            fontSize: 10,
+            color: "#10b981",
+          }}
+        >
+          <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <IconImage itemId={mNode.itemId} itemName={mNode.itemName} size={32} itemType={mNode.itemType} />
+          </div>
+          <span
+            style={{
+              fontWeight: 700,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontFamily: "var(--font-geist-sans), sans-serif",
+            }}
+          >
+            ×{formatAmount(mNode.requestedAmount)}
+          </span>
+        </div>
+        
+        {/* Product Name */}
+        <div
+          style={{
+            color: "#bbb",
+            fontSize: 7,
+            fontWeight: 400,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+            textAlign: "center",
+            fontFamily: "var(--font-geist-sans), sans-serif",
+            marginTop: 2,
+          }}
+          title={mNode.itemName}
+        >
+          {mNode.itemName}
+        </div>
+        
+        {/* Lock indicator */}
+        {mNode.isLockedRaw && (
+          <div style={{ color: "#10b981", fontSize: 6, fontWeight: 700, marginTop: 2 }}>
+            🔒 Locked
+          </div>
+        )}
+      </div>
+
+      {/* Children */}
+      {children.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
+          {/* Vertical connector down */}
+          <div style={{ width: 1, height: 8, background: "#3b82f6", opacity: 0.4 }} />
+
+          {/* Row of children with horizontal connectors */}
+          <div style={{ display: "flex", position: "relative", gap: 8 }}>
+            {children.map((child, idx) => {
+              const isFirst = idx === 0;
+              const isLast = idx === children.length - 1;
+
+              return (
+                <div
+                  key={`${mNode.id}-${child.id}-${idx}`}
+                  style={{
+                    position: "relative",
+                    paddingTop: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                  }}
+                >
+                  {/* Horizontal line segment */}
+                  {children.length > 1 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: isFirst ? "50%" : 0,
+                        right: isLast ? "50%" : 0,
+                        height: 1,
+                        background: "#3b82f6",
+                        opacity: 0.4,
+                      }}
+                    />
+                  )}
+                  {/* Vertical connector up to the horizontal line */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      width: 1,
+                      height: 8,
+                      background: "#3b82f6",
+                      opacity: 0.4,
+                    }}
+                  />
+                  <PipelineTreeNode
+                    mNode={child}
+                    nodes={nodes}
+                    edges={edges}
+                    onSelectNode={onSelectNode}
+                    visited={nextVisited}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function ShoppingList({ nodes, edges, targetItemName, targetAmount, dragHandleProps, onSelectNode }: ShoppingListProps) {
   const [activeTab, setActiveTab] = useState<"equipment" | "materials">("equipment");
+  const [zoom, setZoom] = useState(1);
 
   // Build raw materials and catalysts
   const { rawMaterials, catalysts } = useMemo(
@@ -226,11 +458,15 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
     >
       {/* Title Header */}
       <div
+        {...dragHandleProps}
         style={{
           padding: "16px 14px 12px",
           borderBottom: "1px solid #282828",
           flexShrink: 0,
           fontFamily: "var(--font-geist-mono, monospace)",
+          cursor: dragHandleProps?.style?.cursor ?? "grab",
+          userSelect: "none",
+          ...dragHandleProps?.style,
         }}
       >
         <div style={{ color: "#e5e5e5", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
@@ -309,191 +545,123 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
           </div>
         </div>
       ) : (
-        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {/* TAB 1: EQUIPMENT PIPELINE */}
           {activeTab === "equipment" && (
-            <div style={{ padding: "0 10px" }}>
+            <div
+              style={{
+                flex: 1,
+                overflow: "auto",
+                padding: "12px 8px 16px",
+                boxSizing: "border-box",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
+              {/* Zoom controls */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+                maxWidth: 240,
+                marginBottom: 10,
+                padding: "4px 8px",
+                background: "#161616",
+                borderRadius: 6,
+                border: "1px solid #282828",
+                fontFamily: "var(--font-geist-mono, monospace)",
+                fontSize: 9,
+                flexShrink: 0,
+                boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+              }}>
+                <span style={{ color: "#888" }}>Zoom: {(zoom * 100).toFixed(0)}%</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    onClick={() => setZoom(z => Math.max(0.5, z - 0.1))}
+                    style={{
+                      background: "#222", border: "1px solid #333", color: "#ccc",
+                      padding: "2px 5px", borderRadius: 4, cursor: "pointer", fontSize: 9,
+                      lineHeight: 1
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#2a2a2a"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#222"}
+                  >
+                    -
+                  </button>
+                  <button
+                    onClick={() => setZoom(1)}
+                    style={{
+                      background: "#222", border: "1px solid #333", color: "#ccc",
+                      padding: "2px 5px", borderRadius: 4, cursor: "pointer", fontSize: 9,
+                      lineHeight: 1
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#2a2a2a"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#222"}
+                  >
+                    1:1
+                  </button>
+                  <button
+                    onClick={() => setZoom(z => Math.min(2.0, z + 0.1))}
+                    style={{
+                      background: "#222", border: "1px solid #333", color: "#ccc",
+                      padding: "2px 5px", borderRadius: 4, cursor: "pointer", fontSize: 9,
+                      lineHeight: 1
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#2a2a2a"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#222"}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
               {sortedMachines.length === 0 ? (
                 <div style={{ color: "#444", fontSize: 9, textAlign: "center", marginTop: 24, fontFamily: "monospace" }}>
                   No machines required (raw items only)
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 14, position: "relative" }}>
-                  {/* Vertical connecting line */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 13,
-                      top: 15,
-                      bottom: 15,
-                      width: 1.5,
-                      background: "linear-gradient(to bottom, #3b82f6, #10b981)",
-                      opacity: 0.4,
-                      zIndex: 0,
-                    }}
-                  />
+                <div style={{
+                  width: "max-content",
+                  minWidth: "100%",
+                  display: "flex",
+                  justifyContent: "center",
+                  zoom: zoom,
+                  transition: "zoom 0.12s ease",
+                }}>
+                  {(() => {
+                    const rootMachines = sortedMachines.filter(
+                      (m) => !edges.some((e) => e.source === m.id)
+                    );
+                    
+                    if (rootMachines.length === 0) {
+                      const fallbackRoot = sortedMachines[sortedMachines.length - 1];
+                      if (!fallbackRoot) return null;
+                      return (
+                        <PipelineTreeNode
+                          mNode={fallbackRoot}
+                          nodes={nodes}
+                          edges={edges}
+                          onSelectNode={onSelectNode}
+                        />
+                      );
+                    }
 
-                  {sortedMachines.map((mNode, idx) => {
-                    const stepNum = idx + 1;
                     return (
-                      <div
-                        key={mNode.id}
-                        style={{
-                          display: "flex",
-                          gap: 12,
-                          position: "relative",
-                          zIndex: 1,
-                        }}
-                      >
-                        {/* Step Number Circle */}
-                        <div
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: "50%",
-                            background: "#222",
-                            border: "2px solid #3b82f6",
-                            color: "#3b82f6",
-                            fontSize: 10,
-                            fontWeight: 800,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexShrink: 0,
-                            boxShadow: "0 2px 5px rgba(0,0,0,0.5)",
-                            fontFamily: "monospace",
-                          }}
-                        >
-                          {stepNum}
-                        </div>
-
-                        {/* Machine Info Box */}
-                        <div
-                          style={{
-                            flex: 1,
-                            background: "#1e1e1e",
-                            border: "1px solid #282828",
-                            borderRadius: 8,
-                            padding: "8px 10px",
-                            boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                            minWidth: 0,
-                            transition: "border-color 0.15s ease, transform 0.15s ease",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = "#3b82f6";
-                            e.currentTarget.style.transform = "translateY(-1px)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = "#282828";
-                            e.currentTarget.style.transform = "translateY(0)";
-                          }}
-                        >
-                          {/* Machine name */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                            <div
-                              style={{
-                                width: 18,
-                                height: 18,
-                                background: "#111",
-                                border: "1px solid #333",
-                                borderRadius: 4,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                              }}
-                            >
-                              <IconImage itemId={mNode.machineId ?? "minecraft:crafting_table"} itemName={mNode.machineName ?? "Crafting"} size={18} />
-                            </div>
-                            <span style={{ color: "#fff", fontSize: 9, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {mNode.machineName}
-                            </span>
-                          </div>
-
-                          {/* Produces info */}
-                          <div style={{ background: "rgba(16,185,129,0.06)", border: "1px dashed rgba(16,185,129,0.2)", borderRadius: 5, padding: "4px 6px", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ color: "#10b981", fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                              Out:
-                            </span>
-                            <div style={{ width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <IconImage itemId={mNode.itemId} itemName={mNode.itemName} size={14} itemType={mNode.itemType} />
-                            </div>
-                            <span style={{ color: "#ccc", fontSize: 9, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                              {mNode.itemName}
-                            </span>
-                            <span style={{ color: "#10b981", fontSize: 9, fontWeight: 700 }}>
-                              ×{formatAmount(mNode.requestedAmount)}
-                            </span>
-                          </div>
-
-                          {/* Inputs Requirements */}
-                          <div style={{ fontSize: 8, color: "#555", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>
-                            Requires:
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            {mNode.inputs.map((input) => {
-                              // Check if this input comes from another machine step
-                              let sourceIdx: number | null = null;
-                              let sourceName: string | null = null;
-                              const edge = edges.find((e) => e.target === mNode.id && e.targetHandle === `input-${input.itemId}`);
-                              if (edge) {
-                                const childNode = nodes.find((n) => n.id === edge.source);
-                                if (childNode && childNode.machineId !== null) {
-                                  sourceIdx = sortedMachines.findIndex((sm) => sm.id === childNode.id);
-                                  sourceName = childNode.machineName;
-                                }
-                              }
-
-                              return (
-                                <div
-                                  key={input.itemId}
-                                  style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    background: "#161616",
-                                    padding: "4px 6px",
-                                    borderRadius: 4,
-                                    border: "1px solid #242424",
-                                  }}
-                                >
-                                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                    <div style={{ width: 12, height: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                      <IconImage itemId={input.itemId} itemName={input.itemName} size={12} itemType={input.itemType} />
-                                    </div>
-                                    <span style={{ color: "#aaa", fontSize: 8, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                                      {input.itemName}
-                                    </span>
-                                    <span style={{ color: input.catalyst ? "#fb923c" : "#eee", fontSize: 8, fontWeight: 700 }}>
-                                      {formatAmount(input.catalyst ? 1 : input.amount * mNode.batchMultiplier)}
-                                      {input.catalyst && <span style={{ fontSize: 7, color: "#fb923c", marginLeft: 2 }}>(cat)</span>}
-                                    </span>
-                                  </div>
-
-                                  {/* Step link arrow */}
-                                  {sourceIdx !== null && (
-                                    <div
-                                      style={{
-                                        color: "#3b82f6",
-                                        fontSize: 7,
-                                        fontWeight: 700,
-                                        marginTop: 2,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 2,
-                                        fontFamily: "monospace",
-                                        letterSpacing: "0.02em",
-                                      }}
-                                    >
-                                      <span style={{ color: "#3b82f6", fontSize: 9 }}>↳</span> Step {sourceIdx + 1}: {sourceName}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
+                        {rootMachines.map((rootNode) => (
+                          <PipelineTreeNode
+                            key={rootNode.id}
+                            mNode={rootNode}
+                            nodes={nodes}
+                            edges={edges}
+                            onSelectNode={onSelectNode}
+                          />
+                        ))}
                       </div>
                     );
-                  })}
+                  })()}
                 </div>
               )}
             </div>
@@ -501,7 +669,7 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
 
           {/* TAB 2: TOTAL MATERIALS */}
           {activeTab === "materials" && (
-            <div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
               {/* Raw Materials – always shown */}
               <div style={{ padding: "6px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 5 }}>
                 <span>📦 Raw Materials</span>

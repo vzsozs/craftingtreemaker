@@ -17,14 +17,6 @@ type MachineNodeProps = NodeProps & {
 const HANDLE_SIZE = 12;
 const HANDLE_OFFSET = -(HANDLE_SIZE / 2);
 
-function getInitials(name: string): string {
-  return name
-    .split(/[\s_:]+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase())
-    .slice(0, 2)
-    .join("");
-}
 
 export function LockedIcon({ size = 10, color = "currentColor" }: { size?: number; color?: string }) {
   return (
@@ -116,7 +108,6 @@ function InputSlot({
   const [hovered, setHovered] = useState(false);
   const isCat = inp.catalyst;
   const displayAmount = isCat ? inp.amount : inp.amount * batchMultiplier;
-  const initials = getInitials(inp.itemName);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>

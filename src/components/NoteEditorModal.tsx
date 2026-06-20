@@ -27,7 +27,9 @@ export default function NoteEditorModal({
   const [note, setNote] = useState(currentNote ?? "");
 
   useEffect(() => {
-    setNote(currentNote ?? "");
+    requestAnimationFrame(() => {
+      setNote(currentNote ?? "");
+    });
   }, [currentNote, open]);
 
   function handleSave() {

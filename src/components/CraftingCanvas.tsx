@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -17,7 +17,6 @@ import {
   type Edge,
   type Connection,
   BackgroundVariant,
-  MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -25,7 +24,6 @@ import MachineNode from "@/components/nodes/MachineNode";
 import RecipePickerModal from "@/components/RecipePickerModal";
 import NoteEditorModal from "@/components/NoteEditorModal";
 import ShoppingList from "@/components/ShoppingList";
-import { Input } from "@/components/ui/input";
 import { IconImage } from "@/components/IconImage";
 import { getEdgeColor } from "@/lib/batchCalc";
 import type { TreeNodeData } from "@/lib/batchCalc";
@@ -155,13 +153,89 @@ function recalculateTreeAmounts(nds: Node[], eds: Edge[], currentTargetAmount: n
 export default function CraftingCanvas() {
   const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge>([]);
+  const [targetAmount, setTargetAmount] = useState(1);
+
+  // Floating panel drag & resize state
+  const [panelPos, setPanelPos] = useState({ x: 800, y: 60 });
+  const [panelSize, setPanelSize] = useState({ w: 320, h: 600 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const resizeStart = useRef({ w: 0, h: 0, x: 0, y: 0 });
+
+  // Dynamically position panel on mount using window size
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const targetX = Math.max(20, window.innerWidth - 320 - 360);
+      requestAnimationFrame(() => {
+        setPanelPos((prev) => (prev.x !== targetX ? { x: targetX, y: 60 } : prev));
+      });
+    }
+  }, []);
+
+  // Handle global mouse/pointer movements for dragging
+  useEffect(() => {
+    if (!isDragging) return;
+    const handlePointerMove = (e: PointerEvent) => {
+      setPanelPos({
+        x: e.clientX - dragOffset.current.x,
+        y: e.clientY - dragOffset.current.y,
+      });
+    };
+    const handlePointerUp = () => {
+      setIsDragging(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isDragging]);
+
+  // Handle global mouse/pointer movements for resizing
+  useEffect(() => {
+    if (!isResizing) return;
+    const handlePointerMove = (e: PointerEvent) => {
+      const dw = e.clientX - resizeStart.current.x;
+      const dh = e.clientY - resizeStart.current.y;
+      setPanelSize({
+        w: Math.max(280, resizeStart.current.w + dw),
+        h: Math.max(300, resizeStart.current.h + dh),
+      });
+    };
+    const handlePointerUp = () => {
+      setIsResizing(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isResizing]);
+
+  // Highlight and focus node in canvas
+  const handleSelectNodeInCanvas = useCallback((nodeId: string) => {
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        selected: n.id === nodeId,
+      }))
+    );
+  }, [setNodes]);
 
   // Refs to prevent stale closures in React Flow node callbacks
   const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
-
   const edgesRef = useRef(edges);
-  edgesRef.current = edges;
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
 
   const styledEdges = edges; // Opacity/mute styling disabled, nothing should fade out!
 
@@ -170,21 +244,21 @@ export default function CraftingCanvas() {
     setNodes((nds) => {
       const nextNodes = applyNodeChanges(changes, nds) as Node[];
       if (changes.some(c => c.type === "remove")) {
-        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmountRef.current);
+        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmount);
       }
       return nextNodes;
     });
-  }, []);
+  }, [setNodes, targetAmount]);
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     setEdges((eds) => {
       const nextEdges = applyEdgeChanges(changes, eds) as Edge[];
       if (changes.some(c => c.type === "remove")) {
-        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmountRef.current));
+        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmount));
       }
       return nextEdges;
     });
-  }, []);
+  }, [setEdges, setNodes, targetAmount]);
 
   // Root item selection
   const [rootSetup, setRootSetup] = useState<RootSetup>({
@@ -193,9 +267,6 @@ export default function CraftingCanvas() {
     query: "",
     focused: false,
   });
-  const [targetAmount, setTargetAmount] = useState(1);
-  const targetAmountRef = useRef(targetAmount);
-  targetAmountRef.current = targetAmount;
 
   const [rootItem, setRootItem] = useState<{
     id: string;
@@ -383,21 +454,28 @@ export default function CraftingCanvas() {
   const handleToggleLock = useCallback(
     (nodeId: string) => {
       setNodes((nds) => {
-        const nextNodes = nds.map((n) =>
-          n.id === nodeId
-            ? {
-                ...n,
-                data: {
-                  ...n.data as TreeNodeData,
-                  isLockedRaw: !(n.data as TreeNodeData).isLockedRaw,
-                },
-              }
-            : n
-        );
-        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmountRef.current);
+        const targetNode = nds.find((n) => n.id === nodeId);
+        if (!targetNode) return nds;
+        const targetItemId = (targetNode.data as TreeNodeData).itemId;
+        const newLockState = !(targetNode.data as TreeNodeData).isLockedRaw;
+
+        const nextNodes = nds.map((n) => {
+          const nData = n.data as TreeNodeData;
+          if (nData.itemId === targetItemId) {
+            return {
+              ...n,
+              data: {
+                ...nData,
+                isLockedRaw: newLockState,
+              },
+            };
+          }
+          return n;
+        });
+        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmount);
       });
     },
-    []
+    [setNodes, targetAmount]
   );
 
   function handleNoteSave(nodeId: string, note: string | null) {
@@ -411,12 +489,30 @@ export default function CraftingCanvas() {
   const onConnect = useCallback(
     (connection: Connection) => {
       setEdges((eds) => {
-        const nextEdges = addEdge(connection, eds);
-        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmountRef.current));
+        const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
+        const itemType = (sourceNode?.data as TreeNodeData)?.itemType ?? "item";
+        const edgeColor = getEdgeColor(itemType);
+
+        const customEdge: Edge = {
+          id: `edge-${connection.target}-${connection.source}`,
+          source: connection.source ?? "",
+          target: connection.target ?? "",
+          sourceHandle: connection.sourceHandle,
+          targetHandle: connection.targetHandle,
+          style: {
+            stroke: edgeColor,
+            strokeWidth: 1.5,
+            strokeDasharray: itemType === "item" ? "6 3" : "none",
+          },
+          animated: itemType !== "item",
+        };
+
+        const nextEdges = addEdge(customEdge, eds);
+        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmount));
         return nextEdges;
       });
     },
-    []
+    [setEdges, setNodes, targetAmount]
   );
 
   const isValidConnection = useCallback(
@@ -897,16 +993,84 @@ export default function CraftingCanvas() {
             </div>
           </div>
         )}
-      </div>
 
-      {/* ── Shopping List ─────────────────────────────────────────────────── */}
-      <div style={{ width: 256, flexShrink: 0 }}>
-        <ShoppingList
-          nodes={getNodeDataList()}
-          edges={edges}
-          targetItemName={rootItem?.name ?? null}
-          targetAmount={targetAmount}
-        />
+        {/* Floating Resizable Materials & Equipment Panel */}
+        {nodes.length > 0 && (
+          <div
+            style={{
+              position: "absolute",
+              top: panelPos.y,
+              left: panelPos.x,
+              width: panelSize.w,
+              height: panelSize.h,
+              zIndex: 50,
+              background: "rgba(24, 24, 24, 0.85)",
+              backdropFilter: "blur(12px)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              borderRadius: 12,
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.75)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+              <ShoppingList
+                nodes={getNodeDataList()}
+                edges={edges}
+                targetItemName={rootItem?.name ?? null}
+                targetAmount={targetAmount}
+                onSelectNode={handleSelectNodeInCanvas}
+                dragHandleProps={{
+                  onPointerDown: (e) => {
+                    if (e.button !== 0) return; // Left click only
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    setIsDragging(true);
+                    dragOffset.current = { x: e.clientX - panelPos.x, y: e.clientY - panelPos.y };
+                  },
+                  style: {
+                    cursor: isDragging ? "grabbing" : "grab",
+                    userSelect: "none",
+                  }
+                }}
+              />
+              
+              {/* Bottom-right Resize Handle */}
+              <div
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setIsResizing(true);
+                  resizeStart.current = {
+                    w: panelSize.w,
+                    h: panelSize.h,
+                    x: e.clientX,
+                    y: e.clientY,
+                  };
+                }}
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  right: 0,
+                  width: 16,
+                  height: 16,
+                  cursor: "se-resize",
+                  zIndex: 60,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <svg width="8" height="8" viewBox="0 0 8 8" style={{ pointerEvents: "none" }}>
+                  <line x1="6" y1="0" x2="0" y2="6" stroke="#555" strokeWidth="1" />
+                  <line x1="8" y1="2" x2="2" y2="8" stroke="#555" strokeWidth="1" />
+                  <line x1="8" y1="5" x2="5" y2="8" stroke="#555" strokeWidth="1" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}

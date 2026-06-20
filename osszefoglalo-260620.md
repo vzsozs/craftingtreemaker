@@ -1,4 +1,4 @@
-﻿# CraftingTreeMaker – Összefoglaló és Fejlesztési Terv (2026-06-20)
+# CraftingTreeMaker – Összefoglaló és Fejlesztési Terv (2026-06-20)
 
 ## A projekt jelenlegi állapota
 
@@ -78,7 +78,7 @@ Ha egy közös alapanyag-node-ot (pl. rézpor) több szülő is felhasznál, és
 | 2 | Fejlesztés A – Target item ikon bal panelen | ✅ Kész |
 | 2+ | Dropdown fejlesztés (ikon, 32 elem, 2 oszlop) | ✅ Kész |
 | 3 | Fejlesztés B/1 – Materials fül rendezése | ✅ Kész |
-| 4 | Fejlesztés B/2 – Pipeline fa-diagram + lebegő panel | ⏳ Következő |
+| 4 | Fejlesztés B/2 – Pipeline fa-diagram + lebegő panel | ✅ Kész |
 | 5 | Bug #1 – DAG törlési tesztelés | ⏳ Tesztelendő |
 | 6 | Bug #3 – import script duplikáció | ⏳ Alacsony prioritás |
 | 7 | Bug #5 – melléktermék bekötés | ⏳ Tervezési döntés |
@@ -293,3 +293,16 @@ A `ShoppingList` komponensnek szüksége lesz az `edges` és a `nodes`-ra – ez
 | `src/components/ShoppingList.tsx` | Pipeline fül teljes újraírása: rekurzív `PipelineTreeNode` komponens CSS flexbox fával; az összekötő vonalak lehetnek egyszerű div-ek vagy SVG path-ok |
 
 > **Javaslat a másik AI-nak:** A `ShoppingList.tsx`-ben a Pipeline fül jelenleg a 313–499. sorok között van. Ezt a részt kell teljesen lecserélni. A `sortedMachines`, `edges`, és `nodes` (mint `TreeNodeData[]`) adatok már elérhetők a komponens scope-jában.
+
+---
+
+## 5. Elvégzett Módosítások részletei (Fejlesztés B/2 – Pipeline fa-diagram + lebegő panel)
+
+Sikeresen megvalósítottuk a lebegő, átméretezhető panelt és a Pipeline fül vizuális fa-diagramját a következő funkciókkal:
+- **Lebegő panel:** A jobb oldali sidebar kikerült a statikus elrendezésből, és pointer event alapú húzással áthelyezhetővé, valamint a jobb alsó sarkánál fogva átméretezhetővé vált. Glassmorphism hatást kapott (`backdropFilter`).
+- **Vizuális fa-diagram:** A szöveges listát egy CSS-alapú elágazó hierarchikus fa váltotta fel.
+- **Zoomolás:** A Pipeline tab tetején lévő eszköztár segítségével a fa 50% és 150% közötti méretben zoomolható.
+- **Kompakt nézet:** A gépkártyák mérete, margója és a vonalak hossza lecsökkent a jobb olvashatóság érdekében.
+- **Keresztkötések:** A React key-k egyedivé tételével és ciklus-ellenőrzéssel (`visited` halmaz) zökkenőmentesen támogatja a keresztkötéseket.
+- **Együtt-zárolódás:** Egy elem zárolásakor (Locked Raw) a fa összes azonos `itemId`-jú eleme automatikusan zárolódik.
+- **Él-stílusok:** A manuálisan behúzott élek is automatikusan megkapják a halmazállapotnak megfelelő szín- és animációs stílust a canvas-en.

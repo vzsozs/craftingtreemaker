@@ -24,9 +24,9 @@ function getIconCandidates(itemId: string, itemType?: string): string[] {
   }
 
   // Parse namespace and path
-  let parts = itemId.split(":");
+  const parts = itemId.split(":");
   let ns = parts[0];
-  let path = parts[1] || "";
+  const path = parts[1] || "";
 
   // Strip leading '#' for tags
   if (ns.startsWith("#")) {
