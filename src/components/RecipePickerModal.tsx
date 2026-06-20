@@ -160,7 +160,14 @@ export default function RecipePickerModal({
       setTagLoading(true);
       fetch(`/api/tags/resolve?tagId=${encodeURIComponent(localItemId)}&type=${itemType}`)
         .then((r) => r.json())
-        .then((data) => setResolvedTagItems(data))
+        .then((data) => {
+          if (Array.isArray(data) && data.length === 1) {
+            setLocalItemId(data[0].id);
+            setLocalItemName(data[0].name);
+          } else {
+            setResolvedTagItems(data || []);
+          }
+        })
         .catch(() => setResolvedTagItems([]))
         .finally(() => setTagLoading(false));
       return;
@@ -264,7 +271,7 @@ export default function RecipePickerModal({
             >
               Select Recipe
             </DialogTitle>
-            <DialogDescription style={{ color: "#555", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <div className="text-sm text-muted-foreground" style={{ color: "#555", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div>
                 <span style={{ color: "#34d399", fontWeight: 700 }}>{localItemName ?? localItemId}</span>
                 {"  "}·{"  "}
@@ -291,7 +298,7 @@ export default function RecipePickerModal({
                   ↩ Back to Tag
                 </button>
               )}
-            </DialogDescription>
+            </div>
           </DialogHeader>
         </div>
 
