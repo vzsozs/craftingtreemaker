@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -9,6 +9,10 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  applyNodeChanges,
+  applyEdgeChanges,
+  type NodeChange,
+  type EdgeChange,
   type Node,
   type Edge,
   type Connection,
@@ -22,6 +26,7 @@ import RecipePickerModal from "@/components/RecipePickerModal";
 import NoteEditorModal from "@/components/NoteEditorModal";
 import ShoppingList from "@/components/ShoppingList";
 import { Input } from "@/components/ui/input";
+import { IconImage } from "@/components/IconImage";
 import { getEdgeColor } from "@/lib/batchCalc";
 import type { TreeNodeData } from "@/lib/batchCalc";
 
@@ -31,11 +36,23 @@ const nodeTypes = { machineNode: MachineNode };
 // ─── Collect a node + its entire subtree (to delete on replace) ──────────────
 // Edge model: source=child (producer below), target=parent (consumer above)
 // So "children of nodeId" = edges where target === nodeId → source values
-function collectSubtree(rootId: string, allEdges: Edge[]): Set<string> {
-  const ids = new Set<string>([rootId]);
-  const childEdges = allEdges.filter((e) => e.target === rootId);
+function collectSubtree(
+  nodeId: string,
+  allEdges: Edge[],
+  edgesBeingRemoved: Set<string>
+): Set<string> {
+  // If this node is used by any OTHER parent (an edge where source is this node and edge is NOT being removed)
+  // then we should NOT delete this node (and thus its subtree remains attached).
+  const parentEdges = allEdges.filter(e => e.source === nodeId && !edgesBeingRemoved.has(e.id));
+  if (parentEdges.length > 0) {
+    return new Set<string>(); // Used elsewhere, do not delete
+  }
+
+  const ids = new Set<string>([nodeId]);
+  const childEdges = allEdges.filter((e) => e.target === nodeId);
   for (const edge of childEdges) {
-    collectSubtree(edge.source, allEdges).forEach((id) => ids.add(id));
+    edgesBeingRemoved.add(edge.id);
+    collectSubtree(edge.source, allEdges, edgesBeingRemoved).forEach((id) => ids.add(id));
   }
   return ids;
 }
@@ -63,10 +80,111 @@ type RootSetup = {
   focused: boolean;
 };
 
+function recalculateTreeAmounts(nds: Node[], eds: Edge[], currentTargetAmount: number): Node[] {
+  const updatedNodes = nds.map((n) => ({ ...n, data: { ...n.data as TreeNodeData } }));
+
+  // Initialize all nodes to 0 requestedAmount
+  for (const n of updatedNodes) {
+    (n.data as TreeNodeData).requestedAmount = 0;
+  }
+
+  // Set target on root
+  const rootIndex = updatedNodes.findIndex((n) => n.id === "node-root");
+  if (rootIndex !== -1) {
+    (updatedNodes[rootIndex].data as TreeNodeData).requestedAmount = currentTargetAmount;
+  }
+
+  // Topological sort from parents to children
+  const visited = new Set<string>();
+  const orderedIds: string[] = [];
+
+  function visit(nodeId: string) {
+    if (visited.has(nodeId)) return;
+    visited.add(nodeId);
+
+    const childEdges = eds.filter((e) => e.target === nodeId);
+    for (const edge of childEdges) {
+      visit(edge.source);
+    }
+    orderedIds.push(nodeId);
+  }
+
+  // Start topological sort from root
+  visit("node-root");
+  for (const n of updatedNodes) {
+    visit(n.id);
+  }
+
+  const parentsFirstIds = [...orderedIds].reverse();
+
+  // Propagate top-down
+  for (const nodeId of parentsFirstIds) {
+    const nodeIndex = updatedNodes.findIndex((n) => n.id === nodeId);
+    if (nodeIndex === -1) continue;
+
+    const data = updatedNodes[nodeIndex].data as TreeNodeData;
+    const outputAmount = data.outputs?.find((o) => o.itemId === data.itemId)?.amount ?? 1;
+    const newBatchMultiplier = data.requestedAmount / outputAmount;
+    data.batchMultiplier = newBatchMultiplier;
+
+    const incomingEdges = eds.filter((e) => e.target === nodeId);
+    for (const edge of incomingEdges) {
+      const childIndex = updatedNodes.findIndex((n) => n.id === edge.source);
+      if (childIndex === -1) continue;
+
+      const inputItemId = edge.targetHandle?.replace("input-", "");
+      if (!inputItemId) continue;
+
+      const inputDef = data.inputs?.find((i) => i.itemId === inputItemId);
+      if (!inputDef) continue;
+
+      const childRequested = data.isLockedRaw
+        ? 0
+        : inputDef.catalyst
+        ? inputDef.amount
+        : inputDef.amount * newBatchMultiplier;
+
+      (updatedNodes[childIndex].data as TreeNodeData).requestedAmount += childRequested;
+    }
+  }
+
+  return updatedNodes as Node[];
+}
+
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function CraftingCanvas() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [nodes, setNodes] = useNodesState<Node>([]);
+  const [edges, setEdges] = useEdgesState<Edge>([]);
+
+  // Refs to prevent stale closures in React Flow node callbacks
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+
+  const styledEdges = edges; // Opacity/mute styling disabled, nothing should fade out!
+
+  // Intercept node/edge changes to recalculate amounts if elements are removed via UI (e.g. Backspace)
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((nds) => {
+      const nextNodes = applyNodeChanges(changes, nds) as Node[];
+      if (changes.some(c => c.type === "remove")) {
+        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmountRef.current);
+      }
+      return nextNodes;
+    });
+  }, []);
+
+  const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
+    setEdges((eds) => {
+      const nextEdges = applyEdgeChanges(changes, eds) as Edge[];
+      if (changes.some(c => c.type === "remove")) {
+        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmountRef.current));
+      }
+      return nextEdges;
+    });
+  }, []);
 
   // Root item selection
   const [rootSetup, setRootSetup] = useState<RootSetup>({
@@ -76,6 +194,9 @@ export default function CraftingCanvas() {
     focused: false,
   });
   const [targetAmount, setTargetAmount] = useState(1);
+  const targetAmountRef = useRef(targetAmount);
+  targetAmountRef.current = targetAmount;
+
   const [rootItem, setRootItem] = useState<{
     id: string;
     name: string;
@@ -182,16 +303,19 @@ export default function CraftingCanvas() {
         id,
         onAddChild: handleAddChild,
         onEditNote: handleEditNote,
-      } as TreeNodeData & { onAddChild: unknown; onEditNote: unknown },
+        onToggleLock: handleToggleLock,
+      } as TreeNodeData & { onAddChild: unknown; onEditNote: unknown; onToggleLock: unknown },
     };
 
     if (parentNodeId === "ROOT") {
-      setNodes((nds) => [...nds, newNode]);
+      const nextNodes = [...nodes, newNode];
+      setNodes(recalculateTreeAmounts(nextNodes, edges, targetAmount));
       return;
     }
 
     if (!nodeData.itemId) {
-      setNodes((nds) => [...nds, newNode]);
+      const nextNodes = [...nodes, newNode];
+      setNodes(recalculateTreeAmounts(nextNodes, edges, targetAmount));
       return;
     }
 
@@ -200,8 +324,11 @@ export default function CraftingCanvas() {
     const existingEdge = edges.find(
       (e) => e.target === parentNodeId && e.targetHandle === `input-${inputItemId}`
     );
+    const removedEdges = new Set<string>();
+    if (existingEdge) removedEdges.add(existingEdge.id);
+
     const idsToRemove: Set<string> = existingEdge
-      ? collectSubtree(existingEdge.source, edges)
+      ? collectSubtree(existingEdge.source, edges, removedEdges)
       : new Set();
 
     const itemType = nodeData.itemType ?? "item";
@@ -220,21 +347,24 @@ export default function CraftingCanvas() {
       animated: itemType !== "item",
     };
 
-    setNodes((nds) => [
-      ...nds.filter((n) => !idsToRemove.has(n.id)),
+    const nextNodes = [
+      ...nodes.filter((n) => !idsToRemove.has(n.id)),
       newNode,
-    ]);
-    setEdges((eds) => [
-      ...eds.filter(
+    ];
+    const nextEdges = [
+      ...edges.filter(
         (e) => !idsToRemove.has(e.source) && !idsToRemove.has(e.target)
       ),
       newEdge,
-    ]);
+    ];
+
+    setEdges(nextEdges);
+    setNodes(recalculateTreeAmounts(nextNodes, nextEdges, targetAmount));
   }
 
   const handleAddChild = useCallback(
     (nodeId: string, inputItemId: string, requestedAmount: number) => {
-      const node = nodes.find((n) => n.id === nodeId);
+      const node = nodesRef.current.find((n) => n.id === nodeId);
       const nodeData = node?.data as TreeNodeData | undefined;
       const inputInfo = nodeData?.inputs.find((i) => i.itemId === inputItemId);
       const name = inputInfo?.itemName ?? inputItemId;
@@ -243,12 +373,32 @@ export default function CraftingCanvas() {
       setRecipeItemName(name);
       setRecipeModalOpen(true);
     },
-    [nodes]
+    []
   );
 
   const handleEditNote = useCallback((nodeId: string, currentNote: string | null) => {
     setNoteModal({ open: true, nodeId, currentNote });
   }, []);
+
+  const handleToggleLock = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => {
+        const nextNodes = nds.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data as TreeNodeData,
+                  isLockedRaw: !(n.data as TreeNodeData).isLockedRaw,
+                },
+              }
+            : n
+        );
+        return recalculateTreeAmounts(nextNodes, edgesRef.current, targetAmountRef.current);
+      });
+    },
+    []
+  );
 
   function handleNoteSave(nodeId: string, note: string | null) {
     setNodes((nds) =>
@@ -259,60 +409,33 @@ export default function CraftingCanvas() {
   }
 
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
-    [setEdges]
+    (connection: Connection) => {
+      setEdges((eds) => {
+        const nextEdges = addEdge(connection, eds);
+        setNodes((nds) => recalculateTreeAmounts(nds, nextEdges, targetAmountRef.current));
+        return nextEdges;
+      });
+    },
+    []
+  );
+
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
+      const sourceItemId = (sourceNode?.data as TreeNodeData)?.itemId;
+
+      const expectedItemId = connection.targetHandle?.replace("input-", "");
+
+      if (!sourceItemId || !expectedItemId) return false;
+
+      return sourceItemId === expectedItemId;
+    },
+    []
   );
 
   function handleTargetAmountChange(val: number) {
     setTargetAmount(val);
-    setNodes((nds) => {
-      // H-12 FIX: Rekurzív cascade – frissítjük az egész fa
-      // requestedAmount és batchMultiplier értékét, nem csak a root node-ot.
-      // Él-modell: source=gyerek (termelő), target=szülő (fogyasztó)
-      // tehát egy node gyerekei: edges ahol target === nodeId → source értékek
-
-      const updatedNodes = nds.map((n) => ({ ...n, data: { ...n.data } }));
-
-      function updateNode(nodeId: string, requestedAmount: number) {
-        const nodeIndex = updatedNodes.findIndex((n) => n.id === nodeId);
-        if (nodeIndex === -1) return;
-
-        const data = updatedNodes[nodeIndex].data as TreeNodeData;
-        const outputAmount =
-          data.outputs.find((o) => o.itemId === data.itemId)?.amount ?? 1;
-        const newBatchMultiplier = requestedAmount / outputAmount;
-
-        updatedNodes[nodeIndex] = {
-          ...updatedNodes[nodeIndex],
-          data: {
-            ...data,
-            requestedAmount,
-            batchMultiplier: newBatchMultiplier,
-          },
-        };
-
-        // Megkeressük a gyerekeket (edges ahol target === nodeId)
-        const childEdges = edges.filter((e) => e.target === nodeId);
-        for (const edge of childEdges) {
-          // targetHandle: "input-{itemId}" – ebből kinyerjük melyik inputhoz tartozik
-          const inputItemId = edge.targetHandle?.replace("input-", "");
-          if (!inputItemId) continue;
-
-          const inputDef = data.inputs.find((i) => i.itemId === inputItemId);
-          if (!inputDef) continue;
-
-          // Katalizátor esetén a mennyiség fix, nem szorzódik
-          const childRequested = inputDef.catalyst
-            ? inputDef.amount
-            : inputDef.amount * newBatchMultiplier;
-
-          updateNode(edge.source, childRequested);
-        }
-      }
-
-      updateNode("node-root", val);
-      return updatedNodes;
-    });
+    setNodes((nds) => recalculateTreeAmounts(nds, edges, val));
   }
 
   function resetTree() {
@@ -334,7 +457,7 @@ export default function CraftingCanvas() {
       {/* ── Left sidebar ──────────────────────────────────────────────────── */}
       <div
         style={{
-          width: 260,
+          width: 320,
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
@@ -427,33 +550,79 @@ export default function CraftingCanvas() {
               </label>
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
                   background: "#262626",
                   border: "1px solid #3a3a3a",
                   borderRadius: 6,
-                  padding: "7px 10px",
+                  padding: "8px 10px",
                 }}
               >
-                <span style={{ color: "#34d399", fontSize: 12, fontWeight: 700 }}>
-                  {rootItem.name}
-                </span>
-                <button
-                  onClick={resetTree}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "#555",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    padding: 0,
-                    lineHeight: 1,
-                  }}
-                  title="Reset tree"
-                >
-                  ✕
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Item icon slot */}
+                  <div
+                    style={{
+                      width: 40,
+                      height: 40,
+                      flexShrink: 0,
+                      background: "#1a1a1a",
+                      border: `1.5px solid ${
+                        rootItem.type === "fluid" ? "#2563eb"
+                        : rootItem.type === "gas" ? "#7c3aed"
+                        : "#3a3a3a"
+                      }`,
+                      borderRadius: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "inset 0 1px 3px rgba(0,0,0,0.5)",
+                    }}
+                  >
+                    <IconImage
+                      itemId={rootItem.id}
+                      itemName={rootItem.name}
+                      size={40}
+                      itemType={rootItem.type}
+                      textStyle={{
+                        color: rootItem.type === "fluid" ? "#93c5fd"
+                          : rootItem.type === "gas" ? "#c4b5fd"
+                          : "#aaa",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        fontFamily: "monospace",
+                        letterSpacing: "-0.04em",
+                      }}
+                    />
+                  </div>
+                  {/* Name + id */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: "#34d399", fontSize: 12, fontWeight: 700, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {rootItem.name}
+                    </div>
+                    <div style={{ color: "#444", fontSize: 8, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {rootItem.id}
+                    </div>
+                  </div>
+                  {/* Reset button */}
+                  <button
+                    onClick={resetTree}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#444",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      padding: "2px 3px",
+                      lineHeight: 1,
+                      flexShrink: 0,
+                      borderRadius: 4,
+                      transition: "color 0.12s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = "#444")}
+                    title="Reset tree"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -498,55 +667,94 @@ export default function CraftingCanvas() {
               {showDropdown && rootSetup.results.length > 0 && (
                 <div
                   style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    right: -80,
                     marginTop: 4,
-                    background: "#262626",
+                    background: "#1e1e1e",
                     border: "1px solid #3a3a3a",
-                    borderRadius: 6,
+                    borderRadius: 8,
                     overflow: "hidden",
-                    maxHeight: 240,
+                    maxHeight: 380,
                     overflowY: "auto",
+                    zIndex: 100,
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
                   }}
                 >
-                  {rootSetup.results.slice(0, 12).map((item) => {
-                    const typeColors = { item: "#666", fluid: "#2563eb", gas: "#7c3aed" };
-                    return (
-                      <button
-                        key={item.id}
-                        onMouseDown={() => startTree(item)}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "7px 10px",
-                          background: "transparent",
-                          border: "none",
-                          borderBottom: "1px solid #2a2a2a",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 7,
-                          fontFamily: "inherit",
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "#2f2f2f")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                      >
-                        <div
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 1,
+                      padding: 2,
+                      background: "#1a1a1a",
+                    }}
+                  >
+                    {rootSetup.results.slice(0, 32).map((item) => {
+                      const borderColors = { item: "#3a3a3a", fluid: "#2563eb", gas: "#7c3aed" };
+                      const textColors = { item: "#aaa", fluid: "#93c5fd", gas: "#c4b5fd" };
+                      return (
+                        <button
+                          key={item.id}
+                          onMouseDown={() => startTree(item)}
                           style={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: "50%",
-                            background: typeColors[item.type] ?? "#666",
-                            flexShrink: 0,
+                            textAlign: "left",
+                            padding: "6px 8px",
+                            background: "#1e1e1e",
+                            border: "none",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontFamily: "inherit",
+                            transition: "background 0.12s",
+                            minWidth: 0,
                           }}
-                        />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: "#ccc", fontSize: 11, fontWeight: 600, lineHeight: 1.2 }}>
-                            {item.name}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "#2a2a2a")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "#1e1e1e")}
+                        >
+                          {/* Icon slot */}
+                          <div
+                            style={{
+                              width: 32,
+                              height: 32,
+                              flexShrink: 0,
+                              background: "#141414",
+                              border: `1.5px solid ${borderColors[item.type] ?? "#3a3a3a"}`,
+                              borderRadius: 5,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.4)",
+                            }}
+                          >
+                            <IconImage
+                              itemId={item.id}
+                              itemName={item.name}
+                              size={32}
+                              itemType={item.type}
+                              textStyle={{
+                                color: textColors[item.type] ?? "#aaa",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                fontFamily: "monospace",
+                                letterSpacing: "-0.04em",
+                              }}
+                            />
                           </div>
-                          <div style={{ color: "#444", fontSize: 9, marginTop: 1 }}>{item.id}</div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                          {/* Text */}
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ color: "#ccc", fontSize: 10, fontWeight: 600, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.name}
+                            </div>
+                            <div style={{ color: "#444", fontSize: 8, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.id}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -627,10 +835,11 @@ export default function CraftingCanvas() {
       <div style={{ flex: 1, position: "relative" }}>
         <ReactFlow
           nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
+          edges={styledEdges}
+          onNodesChange={handleNodesChange}
+          onEdgesChange={handleEdgesChange}
           onConnect={onConnect}
+          isValidConnection={isValidConnection}
           nodeTypes={nodeTypes}
           fitView
           defaultEdgeOptions={defaultEdgeOptions}
@@ -694,6 +903,7 @@ export default function CraftingCanvas() {
       <div style={{ width: 256, flexShrink: 0 }}>
         <ShoppingList
           nodes={getNodeDataList()}
+          edges={edges}
           targetItemName={rootItem?.name ?? null}
           targetAmount={targetAmount}
         />

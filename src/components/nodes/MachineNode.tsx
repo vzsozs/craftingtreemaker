@@ -10,6 +10,7 @@ type MachineNodeProps = NodeProps & {
   data: TreeNodeData & {
     onAddChild: (nodeId: string, inputItemId: string, requestedAmount: number) => void;
     onEditNote: (nodeId: string, currentNote: string | null) => void;
+    onToggleLock?: (nodeId: string) => void;
   };
 };
 
@@ -23,6 +24,48 @@ function getInitials(name: string): string {
     .map((w) => w[0].toUpperCase())
     .slice(0, 2)
     .join("");
+}
+
+export function LockedIcon({ size = 10, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ display: "inline-block", verticalAlign: "middle" }}>
+      {/* Padlock shackle (locked: closed) */}
+      <path d="M8 10V6a4 4 0 0 1 8 0v4" />
+      {/* Padlock body as a mechanical gear */}
+      <circle cx="12" cy="15" r="5" />
+      <circle cx="12" cy="15" r="1.5" />
+      {/* Gear teeth */}
+      <line x1="12" y1="8" x2="12" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="22" />
+      <line x1="5" y1="15" x2="7" y2="15" />
+      <line x1="17" y1="15" x2="19" y2="15" />
+      <line x1="7.5" y1="10.5" x2="9" y2="12" />
+      <line x1="15" y1="12" x2="16.5" y2="10.5" />
+      <line x1="7.5" y1="19.5" x2="9" y2="18" />
+      <line x1="15" y1="18" x2="16.5" y2="19.5" />
+    </svg>
+  );
+}
+
+export function UnlockedIcon({ size = 10, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ display: "inline-block", verticalAlign: "middle" }}>
+      {/* Padlock shackle (unlocked: open) */}
+      <path d="M8 10V6a4 4 0 0 1 7.5 -2" />
+      {/* Padlock body as a mechanical gear */}
+      <circle cx="12" cy="15" r="5" />
+      <circle cx="12" cy="15" r="1.5" />
+      {/* Gear teeth */}
+      <line x1="12" y1="8" x2="12" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="22" />
+      <line x1="5" y1="15" x2="7" y2="15" />
+      <line x1="17" y1="15" x2="19" y2="15" />
+      <line x1="7.5" y1="10.5" x2="9" y2="12" />
+      <line x1="15" y1="12" x2="16.5" y2="10.5" />
+      <line x1="7.5" y1="19.5" x2="9" y2="18" />
+      <line x1="15" y1="18" x2="16.5" y2="19.5" />
+    </svg>
+  );
 }
 
 // ── Icon Component is imported from IconImage.tsx ────────────────────────────
@@ -62,12 +105,13 @@ function MainItemSlot({ itemId, itemName, type, size = 46 }: { itemId: string; i
 
 // ── Compact input slot (NO Handle inside – handles live at node root) ─────────
 function InputSlot({
-  inp, batchMultiplier, onAddChild, nodeId,
+  inp, batchMultiplier, onAddChild, nodeId, isLockedNode,
 }: {
   inp: TreeNodeData["inputs"][0];
   batchMultiplier: number;
   onAddChild: (nodeId: string, itemId: string, amount: number) => void;
   nodeId: string;
+  isLockedNode?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   const isCat = inp.catalyst;
@@ -78,17 +122,17 @@ function InputSlot({
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       {/* Slot box */}
       <div
-        onMouseEnter={() => !isCat && setHovered(true)}
+        onMouseEnter={() => !isCat && !isLockedNode && setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        onClick={() => { if (!isCat) onAddChild(nodeId, inp.itemId, inp.amount * batchMultiplier); }}
-        data-tooltip={isCat ? `${inp.itemName} (catalyst)` : `Add recipe for ${inp.itemName}`}
+        onClick={() => { if (!isCat && !isLockedNode) onAddChild(nodeId, inp.itemId, inp.amount * batchMultiplier); }}
+        data-tooltip={isCat ? `${inp.itemName} (catalyst)` : isLockedNode ? `${inp.itemName} (locked as raw)` : `Add recipe for ${inp.itemName}`}
         style={{
           width: 44, height: 44,
-          background: isCat ? "rgba(234,88,12,0.07)" : hovered ? "rgba(52,211,153,0.1)" : "#282828",
-          border: `2px solid ${isCat ? "rgba(234,88,12,0.45)" : hovered ? "rgba(52,211,153,0.55)" : "#3a3a3a"}`,
+          background: isCat ? "rgba(234,88,12,0.07)" : hovered && !isLockedNode ? "rgba(52,211,153,0.1)" : "#282828",
+          border: `2px solid ${isCat ? "rgba(234,88,12,0.45)" : hovered && !isLockedNode ? "rgba(52,211,153,0.55)" : "#3a3a3a"}`,
           borderRadius: 6,
           position: "relative",
-          cursor: isCat ? "default" : "pointer",
+          cursor: isCat || isLockedNode ? "default" : "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "border-color 0.12s, background 0.12s",
           overflow: "hidden",
@@ -101,7 +145,7 @@ function InputSlot({
           size={44} 
           itemType={inp.itemType}
           textStyle={{
-            color: isCat ? "#fb923c" : hovered ? "#6ee7b7" : "#888",
+            color: isCat ? "#fb923c" : hovered && !isLockedNode ? "#6ee7b7" : "#888",
             fontSize: 14, fontWeight: 700, fontFamily: "monospace",
             letterSpacing: "-0.03em", userSelect: "none",
             transition: "color 0.12s",
@@ -132,7 +176,7 @@ function InputSlot({
         )}
 
         {/* Hover + overlay */}
-        {hovered && !isCat && (
+        {hovered && !isCat && !isLockedNode && (
           <div style={{
             position: "absolute", inset: 0,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -166,15 +210,35 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
   // Dynamic width: smaller baseline, tighter scaling per input (since slot is 44px)
   const nodeMinWidth = Math.max(180, inputCount * 54 + 16);
 
+  // Opacity should never change (always 1)
+  const opacity = 1;
+
+  // Background and borders based on recipe state and manual locks
+  const bg = data.isLockedRaw 
+    ? "#11221a" // Highlighted deep forest green for locked raw material
+    : isRaw 
+    ? "#231f16" 
+    : "#202020";
+
+  const border = selected 
+    ? "1.5px solid #34d399" 
+    : data.isLockedRaw 
+    ? "1.5px solid #10b981" // Strong green border for locked raw
+    : isRaw 
+    ? "1.5px solid #78350f" 
+    : "1.5px solid #333";
+
   return (
     <div style={{
-      background: isRaw ? "#231f16" : "#202020",
-      border: selected ? "1.5px solid #34d399" : isRaw ? "1.5px solid #78350f" : "1.5px solid #333",
+      background: bg,
+      border: border,
       borderRadius: 8,
       boxShadow: selected ? "0 0 12px rgba(52,211,153,0.15)" : "none",
       fontFamily: "var(--font-geist-mono, monospace)",
       position: "relative",
       minWidth: nodeMinWidth,
+      opacity: opacity,
+      transition: "opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease",
     }}>
 
       {/* Output handle */}
@@ -238,20 +302,47 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
       }}>
         <span style={{
           fontSize: 9, letterSpacing: "0.02em", color: "#888", fontWeight: 600,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "90%"
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%"
         }}>
-          {isRaw ? `⛏ ${data.itemId}` : `⚙ ${data.itemId}`}
+          {data.isLockedRaw ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}>
+              <LockedIcon size={9} color="#10b981" /> {data.itemId}
+            </span>
+          ) : isRaw ? (
+            `⛏ ${data.itemId}`
+          ) : (
+            `⚙ ${data.itemId}`
+          )}
         </span>
-        <button
-          onClick={() => data.onEditNote(id, data.notes)}
-          style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: "#444", fontSize: 10, padding: "0 1px", lineHeight: 1,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "#ca8a04")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "#444")}
-          data-tooltip="Edit note"
-        >✏</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Lock Button (manual raw material toggle) - not available on root node */}
+          {id !== "node-root" && (
+            <button
+              onClick={() => data.onToggleLock?.(id)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: data.isLockedRaw ? "#10b981" : "#444", fontSize: 10, padding: "0 1px", lineHeight: 1,
+                transition: "color 0.12s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = data.isLockedRaw ? "#059669" : "#10b981")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = data.isLockedRaw ? "#10b981" : "#444")}
+              title={data.isLockedRaw ? "Unlock recipe (re-enable sub-assembly)" : "Lock as raw material (already in-stock)"}
+            >
+              {data.isLockedRaw ? <LockedIcon size={10} color="#10b981" /> : <UnlockedIcon size={10} color="#444" />}
+            </button>
+          )}
+          {/* Edit Note Button */}
+          <button
+            onClick={() => data.onEditNote(id, data.notes)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "#444", fontSize: 10, padding: "0 1px", lineHeight: 1,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "#ca8a04")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#444")}
+            title="Edit note"
+          >✏</button>
+        </div>
       </div>
 
       {/* ── Middle: Machine & Item side-by-side ── */}
@@ -354,6 +445,7 @@ function MachineNode({ id, data, selected }: MachineNodeProps) {
                   nodeId={id}
                   batchMultiplier={data.batchMultiplier}
                   onAddChild={data.onAddChild}
+                  isLockedNode={data.isLockedRaw}
                 />
               </div>
             );

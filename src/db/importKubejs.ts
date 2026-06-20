@@ -66,7 +66,7 @@ const parseOutput = (outData: any, isFluid: boolean) => {
 };
 
 const itemsToInsert = new Map<string, { id: string, name: string, type: "item"|"fluid", modId: string }>();
-const recipesToInsert: any[] = [];
+const recipesToInsertMap = new Map<string, any>();
 
 function parseRecipeFile(filePath: string) {
 
@@ -335,7 +335,7 @@ function parseRecipeFile(filePath: string) {
       }
   }
 
-  recipesToInsert.push({
+  recipesToInsertMap.set(recipeId, {
     id: recipeId,
     machineId: type,
     machineName: toHumanReadable(machineId),
@@ -374,7 +374,7 @@ async function main() {
   scanDir(path.join(dumpsDir, "added_recipes"));
   scanDir(path.join(dumpsDir, "recipes"));
 
-  console.log(`Finished parsing. Found ${recipesToInsert.length} valid recipes and ${itemsToInsert.size} unique items.`);
+  console.log(`Finished parsing. Found ${recipesToInsertMap.size} valid recipes and ${itemsToInsert.size} unique items.`);
   
   console.log("Inserting items to DB...");
   const itemsArr = Array.from(itemsToInsert.values());
@@ -385,6 +385,7 @@ async function main() {
   }
   
   console.log("Inserting recipes to DB...");
+  const recipesToInsert = Array.from(recipesToInsertMap.values());
   if (recipesToInsert.length > 0) {
       for (let i = 0; i < recipesToInsert.length; i += 1000) {
           await db.insert(recipes).values(recipesToInsert.slice(i, i + 1000)).onConflictDoNothing();

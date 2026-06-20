@@ -14,6 +14,7 @@ export type TreeNodeData = {
   outputs: (RecipeOutput & { itemName: string; itemType: "item" | "fluid" | "gas" })[];
   notes: string | null;
   isRoot?: boolean;
+  isLockedRaw?: boolean; // Manual toggle to lock as in-stock raw material
 };
 
 /**
@@ -57,7 +58,7 @@ export function getEdgeColor(type: "item" | "fluid" | "gas"): string {
 
 /**
  * Build a shopping list from the tree nodes.
- * Returns raw materials (leaf nodes with no recipe) and catalysts.
+ * Returns raw materials (leaf nodes with no recipe or locked raw materials) and catalysts.
  */
 export type ShoppingListEntry = {
   itemId: string;
@@ -67,16 +68,39 @@ export type ShoppingListEntry = {
   isCatalyst: boolean;
 };
 
-export function buildShoppingList(nodes: TreeNodeData[]): {
+export function buildShoppingList(
+  nodes: TreeNodeData[],
+  edges?: { source: string; target: string; targetHandle?: string | null }[]
+): {
   rawMaterials: ShoppingListEntry[];
   catalysts: ShoppingListEntry[];
 } {
   const rawMap = new Map<string, ShoppingListEntry>();
   const catalystMap = new Map<string, ShoppingListEntry>();
 
+  // Build a set of "connected input handles" from edges: "nodeId|itemId" → true
+  const connectedInputs = new Set<string>();
+  if (edges) {
+    for (const edge of edges) {
+      if (edge.targetHandle?.startsWith("input-")) {
+        const inputItemId = edge.targetHandle.replace("input-", "");
+        connectedInputs.add(`${edge.target}|${inputItemId}`);
+      }
+    }
+  }
+
+  // Build a node lookup map
+  const nodeMap = new Map<string, TreeNodeData>();
   for (const node of nodes) {
-    // Leaf node = no recipe → it's a raw material
-    if (!node.recipeId) {
+    nodeMap.set(node.id, node);
+  }
+
+  for (const node of nodes) {
+    // If a node is inactive, skip it
+    if (node.requestedAmount <= 0) continue;
+
+    // Leaf node (no recipe chosen) OR manually locked as raw material
+    if (!node.recipeId || node.isLockedRaw) {
       const existing = rawMap.get(node.itemId);
       if (existing) {
         existing.amount += node.requestedAmount;
@@ -91,17 +115,48 @@ export function buildShoppingList(nodes: TreeNodeData[]): {
       }
     }
 
-    // Collect catalysts from recipe inputs
-    for (const input of node.inputs) {
-      if (input.catalyst) {
-        if (!catalystMap.has(input.itemId)) {
-          catalystMap.set(input.itemId, {
-            itemId: input.itemId,
-            itemName: input.itemName,
-            itemType: input.itemType,
-            amount: input.amount,
-            isCatalyst: true,
-          });
+    // If this node has a recipe and is not locked, check each non-catalyst input:
+    // if there is no child node connected to that input slot, it counts as a raw material
+    if (node.recipeId && !node.isLockedRaw && edges) {
+      for (const input of node.inputs) {
+        if (input.catalyst) continue; // catalysts handled separately below
+        const key = `${node.id}|${input.itemId}`;
+        if (!connectedInputs.has(key)) {
+          // This input has no child node attached → treat as raw material
+          const requiredAmount = input.amount * node.batchMultiplier;
+          if (requiredAmount <= 0) continue;
+          const existing = rawMap.get(input.itemId);
+          if (existing) {
+            existing.amount += requiredAmount;
+          } else {
+            rawMap.set(input.itemId, {
+              itemId: input.itemId,
+              itemName: input.itemName,
+              itemType: input.itemType,
+              amount: requiredAmount,
+              isCatalyst: false,
+            });
+          }
+        }
+      }
+    }
+
+    // Collect catalysts from recipe inputs - ONLY if node is active and NOT locked as raw!
+    if (!node.isLockedRaw) {
+      for (const input of node.inputs) {
+        if (input.catalyst) {
+          const existing = catalystMap.get(input.itemId);
+          if (existing) {
+            existing.amount = Math.max(existing.amount, input.amount);
+          } else {
+            catalystMap.set(input.itemId, {
+              itemId: input.itemId,
+              itemName: input.itemName,
+              itemType: input.itemType,
+              amount: input.amount,
+              isCatalyst: true,
+            });
+          }
         }
       }
     }
