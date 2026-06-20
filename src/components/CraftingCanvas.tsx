@@ -27,6 +27,7 @@ import ShoppingList from "@/components/ShoppingList";
 import { IconImage } from "@/components/IconImage";
 import { getEdgeColor } from "@/lib/batchCalc";
 import type { TreeNodeData } from "@/lib/batchCalc";
+import { LayoutGrid } from "lucide-react";
 
 // ─── React Flow node types ───────────────────────────────────────────────────
 const nodeTypes = { machineNode: MachineNode };
@@ -154,6 +155,23 @@ export default function CraftingCanvas() {
   const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge>([]);
   const [targetAmount, setTargetAmount] = useState(1);
+
+  const [dbStats, setDbStats] = useState<{ recipesCount: number; itemsCount: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/db-stats")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && typeof data.recipesCount === "number") {
+          setDbStats(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const displayRecipes = dbStats?.recipesCount ? dbStats.recipesCount.toLocaleString() : "134,000+";
+  const displayItems = dbStats?.itemsCount ? dbStats.itemsCount.toLocaleString() : "27,000+";
+
 
   // Floating panel drag & resize state
   const [panelPos, setPanelPos] = useState({ x: 800, y: 60 });
@@ -542,6 +560,50 @@ export default function CraftingCanvas() {
     setRootSetup({ searching: false, results: [], query: "", focused: false });
   }
 
+  const handleImportState = useCallback((state: {
+    nodes: Node[];
+    edges: Edge[];
+    targetAmount: number;
+    rootItem: typeof rootItem;
+  }) => {
+    // Re-bind callbacks to all imported nodes
+    const boundNodes = state.nodes.map((n) => ({
+      ...n,
+      data: {
+        ...(n.data as any),
+        onAddChild: handleAddChild,
+        onEditNote: handleEditNote,
+        onToggleLock: handleToggleLock,
+      },
+    }));
+
+    // Update the node ID counter to avoid duplicate IDs for new nodes
+    let maxIdNum = 0;
+    state.nodes.forEach((n) => {
+      const match = n.id.match(/^node-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxIdNum) maxIdNum = num;
+      }
+    });
+    nodeIdCounter.current = maxIdNum;
+
+    // Update state
+    setTargetAmount(state.targetAmount);
+    setRootItem(state.rootItem);
+    
+    // Recalculate to ensure tree calculations are consistent and clean
+    setNodes(recalculateTreeAmounts(boundNodes, state.edges, state.targetAmount));
+
+    // Update edges in the next tick to ensure that React Flow has registered
+    // all input/output handles of the newly rendered custom nodes in the DOM,
+    // avoiding the "Couldn't create edge for target handle id" race condition.
+    setTimeout(() => {
+      setEdges(state.edges);
+    }, 0);
+  }, [setNodes, setEdges, handleAddChild, handleEditNote, handleToggleLock]);
+
+
   const showDropdown =
     !rootItem && (rootSetup.focused || rootSetup.results.length > 0);
 
@@ -566,7 +628,7 @@ export default function CraftingCanvas() {
         {/* Logo */}
         <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid #2d2d2d" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 20 }}>🌲</span>
+            <LayoutGrid size={20} style={{ color: "#34d399" }} />
             <span style={{ color: "#e5e5e5", fontWeight: 700, fontSize: 14, letterSpacing: "0.02em" }}>
               Crafting Tree
             </span>
@@ -771,11 +833,12 @@ export default function CraftingCanvas() {
                     background: "#1e1e1e",
                     border: "1px solid #3a3a3a",
                     borderRadius: 8,
-                    overflow: "hidden",
                     maxHeight: 380,
-                    overflowY: "auto",
                     zIndex: 100,
                     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
                   }}
                 >
                   <div
@@ -785,6 +848,8 @@ export default function CraftingCanvas() {
                       gap: 1,
                       padding: 2,
                       background: "#1a1a1a",
+                      overflowY: "auto",
+                      flex: 1,
                     }}
                   >
                     {rootSetup.results.slice(0, 32).map((item) => {
@@ -851,6 +916,27 @@ export default function CraftingCanvas() {
                       );
                     })}
                   </div>
+                  
+                  {/* Dropdown Footer with Stats */}
+                  <div
+                    style={{
+                      padding: "6px 10px",
+                      background: "#151515",
+                      borderTop: "1px solid #2d2d2d",
+                      fontSize: 10,
+                      color: "#ccc",
+                      fontFamily: "var(--font-geist-mono, monospace)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span>Show more recipes <br /> (start typing)</span>
+                    <span style={{ fontSize: 9, color: "#444" }}>
+                      Database: <span style={{ color: "#10b981", fontWeight: 700 }}>{displayRecipes}</span> recipes · <span style={{ color: "#3b82f6", fontWeight: 700 }}>{displayItems}</span> items
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -862,7 +948,7 @@ export default function CraftingCanvas() {
           <div
             style={{
               fontSize: 9,
-              color: "#444",
+              color: "#4e4e4eff",
               letterSpacing: "0.12em",
               textTransform: "uppercase",
               marginBottom: 8,
@@ -876,16 +962,17 @@ export default function CraftingCanvas() {
             "Select your target item",
             "Pick a recipe from modal",
             "Click + on any input to expand",
-            "Export shopping list when done",
+            "Copy Markdown plan to clipboard",
+            "Save / Load your canvas via JSON",
           ].map((step, i) => (
             <div
               key={i}
               style={{ display: "flex", gap: 7, marginBottom: 5, alignItems: "flex-start" }}
             >
-              <span style={{ color: "#333", fontSize: 9, minWidth: 14, fontWeight: 700 }}>
+              <span style={{ color: "#4e4e4eff", fontSize: 9, minWidth: 14, fontWeight: 700 }}>
                 {i + 1}.
               </span>
-              <span style={{ color: "#444", fontSize: 10, lineHeight: 1.4 }}>{step}</span>
+              <span style={{ color: "#4e4e4eff", fontSize: 10, lineHeight: 1.4 }}>{step}</span>
             </div>
           ))}
 
@@ -896,7 +983,7 @@ export default function CraftingCanvas() {
               paddingTop: 10,
               borderTop: "1px solid #2a2a2a",
               fontSize: 9,
-              color: "#444",
+              color: "#4e4e4eff",
               letterSpacing: "0.12em",
               textTransform: "uppercase",
               marginBottom: 7,
@@ -907,7 +994,7 @@ export default function CraftingCanvas() {
           </div>
           {[
             { label: "Solid item", color: "#6B7280" },
-            { label: "Fluid",      color: "#3B82F6" },
+            { label: "Fluid & Gas",      color: "#3B82F6" },
           ].map(({ label, color }) => (
             <div
               key={label}
@@ -978,7 +1065,9 @@ export default function CraftingCanvas() {
             }}
           >
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.15 }}>🌲</div>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+                <LayoutGrid size={48} style={{ opacity: 0.15, color: "#34d399" }} />
+              </div>
               <div
                 style={{
                   color: "#333",
@@ -995,8 +1084,7 @@ export default function CraftingCanvas() {
         )}
 
         {/* Floating Resizable Materials & Equipment Panel */}
-        {nodes.length > 0 && (
-          <div
+        <div
             style={{
               position: "absolute",
               top: panelPos.y,
@@ -1018,9 +1106,12 @@ export default function CraftingCanvas() {
               <ShoppingList
                 nodes={getNodeDataList()}
                 edges={edges}
+                rawNodes={nodes}
+                rootItem={rootItem}
                 targetItemName={rootItem?.name ?? null}
                 targetAmount={targetAmount}
                 onSelectNode={handleSelectNodeInCanvas}
+                onImportState={handleImportState}
                 dragHandleProps={{
                   onPointerDown: (e) => {
                     if (e.button !== 0) return; // Left click only
@@ -1070,7 +1161,6 @@ export default function CraftingCanvas() {
               </div>
             </div>
           </div>
-        )}
       </div>
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}

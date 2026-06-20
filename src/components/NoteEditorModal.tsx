@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Pencil } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -50,8 +51,8 @@ export default function NoteEditorModal({
         }}
       >
         <DialogHeader>
-          <DialogTitle style={{ color: "#e5e5e5", fontSize: 13, fontWeight: 700 }}>
-            📝 Edit Note
+          <DialogTitle style={{ color: "#e5e5e5", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Pencil size={13} style={{ color: "#fbbf24" }} /> Edit Note
           </DialogTitle>
           <DialogDescription style={{ color: "#555", fontSize: 10 }}>
             Add a note to this node (shown with a yellow banner).

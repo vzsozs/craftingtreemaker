@@ -306,3 +306,29 @@ Sikeresen megvalósítottuk a lebegő, átméretezhető panelt és a Pipeline f�
 - **Keresztkötések:** A React key-k egyedivé tételével és ciklus-ellenőrzéssel (`visited` halmaz) zökkenőmentesen támogatja a keresztkötéseket.
 - **Együtt-zárolódás:** Egy elem zárolásakor (Locked Raw) a fa összes azonos `itemId`-jú eleme automatikusan zárolódik.
 - **Él-stílusok:** A manuálisan behúzott élek is automatikusan megkapják a halmazállapotnak megfelelő szín- és animációs stílust a canvas-en.
+
+---
+
+## 6. További Elvégzett Módosítások és Finomítások (Fejlesztés B/3 – Pipeline és Anyagok panel finomhangolása)
+
+További vizuális és funkcionális javításokat, kiegészítéseket hajtottunk végre:
+- **Lebegő ablak koordinátái:** Megoldottuk, hogy az ablak alapértelmezetten a képernyőn belül nyíljon meg (figyelembe véve a bal oldali sidebar 320px-es eltolását).
+- **Pipeline zoom limit:** A maximális zoom értéket 150%-ról 200%-ra növeltük.
+- **Card elrendezés és betűtípusok:** 
+  - A kártyákon a gép nevénél és a termék nevénél/szorzójánál az alap betűtípust (`var(--font-geist-sans), sans-serif`) alkalmazzuk.
+  - A kártya felépítését átrendeztük: felül a gép ikonja (3x méret), alatta a gép neve, alatta a termék ikonja (4x méret) és a szorzó, legalul pedig a termék neve (vékonyabb, 400-as betűvastagsággal).
+  - Csökkentettük a kártyák kihasználatlan részeit a kompaktabb elrendezés érdekében.
+- **Keresztkötések és duplikáció kiszűrése:**
+  - A korábbi rekurzív fa-megoldás helyett a gépeket a DAG (irányított körmentes gráf) szintjei szerint rendeztük el sorokba (Sugiyama-szerű elrendezés).
+  - A keresztbe kötött anyagoknál megszűnt a kártyák duplikálódása, a kapcsolatokat pedig dinamikusan számított SVG spline-okkal (Cubic Bezier) kötjük össze.
+- **Scrollbar javítások:**
+  - A zoomolásnál a `transform: scale` helyett a natív CSS `zoom` tulajdonságra váltottunk, amivel a böngésző pontosan számolja ki a görgetési tartományt, megszüntetve a hibás és felesleges vízszintes/függőleges scrollolásokat.
+  - A weboldal globálisan sötét témájú scrollbar designt kapott (`globals.css`).
+- **Új fül: MACHINES (Gépek listája):**
+  - Bevezettük a harmadik fület PIPELINE / MATERIALS / MACHINES elrendezéssel.
+  - A gépeket craft haladási sorrendben (topológiailag rendezve) listázzuk ki különálló sorokban.
+  - Minden sornál látszik a gép ikonja/neve, valamint a gyártott termék ikonja, neve és mennyisége.
+  - A sorokra kattintva a vászon automatikusan a kiválasztott gépcsomópontra (Node) fókuszál és azt középre igazítja.
+  - Kijavítottuk a terméknevek túl korai levágását (a badge `maxWidth`-ját 35%-ra állítottuk be, és a teljes név megtekinthető hover esetén tooltipként).
+- **Materials fül méretnövelése:**
+  - Megnöveltük az ikonok méretét (36px-ről 42px-re) és a szövegek méretét (nevek, ID-k, szorzók és fejlécek) a Materials fülön is a könnyebb olvashatóság érdekében.

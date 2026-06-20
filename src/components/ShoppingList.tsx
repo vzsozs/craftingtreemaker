@@ -4,15 +4,24 @@ import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { buildShoppingList, formatAmount } from "@/lib/batchCalc";
 import type { TreeNodeData, ShoppingListEntry } from "@/lib/batchCalc";
 import { IconImage } from "@/components/IconImage";
-import type { Edge } from "@xyflow/react";
+import type { Edge, Node as ReactFlowNode } from "@xyflow/react";
+import { Wrench, Cpu, Package, FlaskConical, Compass, Save, FolderOpen } from "lucide-react";
 
 type ShoppingListProps = {
   nodes: TreeNodeData[];
   edges: Edge[];
+  rawNodes?: ReactFlowNode[];
+  rootItem?: { id: string; name: string; type: "item" | "fluid" | "gas" } | null;
   targetItemName: string | null;
   targetAmount: number;
   dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
   onSelectNode?: (nodeId: string) => void;
+  onImportState?: (state: {
+    nodes: ReactFlowNode[];
+    edges: Edge[];
+    targetAmount: number;
+    rootItem: { id: string; name: string; type: "item" | "fluid" | "gas" } | null;
+  }) => void;
 };
 
 const typeColors: Record<string, string> = {
@@ -20,6 +29,30 @@ const typeColors: Record<string, string> = {
   fluid: "#2563eb",
   gas:   "#7c3aed",
 };
+
+const TIER_ORDER = ["ulv", "lv", "mv", "hv", "ev", "iv", "luv", "zpm", "uv", "uhv"];
+const TIER_NAMES: Record<string, string> = {
+  ulv: "ULV",
+  lv: "LV",
+  mv: "MV",
+  hv: "HV",
+  ev: "EV",
+  iv: "IV",
+  luv: "LuV",
+  zpm: "ZPM",
+  uv: "UV",
+  uhv: "UHV",
+};
+
+function getTierIndex(machineId: string | null | undefined): number {
+  if (!machineId || !machineId.startsWith("gtceu:")) return -1;
+  const part = machineId.substring(6);
+  for (let i = 0; i < TIER_ORDER.length; i++) {
+    if (part.startsWith(TIER_ORDER[i] + "_")) return i;
+  }
+  return -1;
+}
+
 
 function EntryRow({ entry }: { entry: ShoppingListEntry }) {
   return (
@@ -320,9 +353,37 @@ function MachineRow({
   );
 }
 
-export default function ShoppingList({ nodes, edges, targetItemName, targetAmount, dragHandleProps, onSelectNode }: ShoppingListProps) {
+export default function ShoppingList({
+  nodes,
+  edges,
+  rawNodes,
+  rootItem,
+  targetItemName,
+  targetAmount,
+  dragHandleProps,
+  onSelectNode,
+  onImportState,
+}: ShoppingListProps) {
   const [activeTab, setActiveTab] = useState<"equipment" | "materials" | "machines">("equipment");
   const [zoom, setZoom] = useState(1);
+  const [copiedMarkdown, setCopiedMarkdown] = useState(false);
+  const [isJsonDropdownOpen, setIsJsonDropdownOpen] = useState(false);
+
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Close dropdown if clicked outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsJsonDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Build raw materials and catalysts
   const { rawMaterials, catalysts } = useMemo(
@@ -443,80 +504,188 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
   const isEmpty = nodes.length === 0;
 
   function buildMarkdownExport() {
-    const lines = [
-      `# Materials and Equipment: ${targetItemName ?? "Unknown"} ×${formatAmount(targetAmount)}`,
-      "",
-      "## Equipment Pipeline (Order of assembly)",
-    ];
-
-    if (sortedMachines.length === 0) {
-      lines.push("No machinery required.");
-    } else {
-      sortedMachines.forEach((mNode, idx) => {
-        lines.push(`${idx + 1}. **${mNode.machineName}** (produces: *${mNode.itemName}* ×${formatAmount(mNode.requestedAmount)})`);
-        mNode.inputs.forEach((input) => {
-          const edge = edges.find((e) => e.target === mNode.id && e.targetHandle === `input-${input.itemId}`);
-          if (edge) {
-            const childNode = nodes.find((n) => n.id === edge.source);
-            if (childNode && childNode.machineId !== null) {
-              const sourceIdx = sortedMachines.findIndex((m) => m.id === childNode.id);
-              lines.push(`   - Requires: *${input.itemName}* ×${formatAmount(input.amount * mNode.batchMultiplier)} (↳ Step ${sourceIdx + 1}: ${childNode.machineName})`);
-              return;
-            }
-          }
-          lines.push(`   - Requires: *${input.itemName}* ×${formatAmount(input.amount * mNode.batchMultiplier)}`);
-        });
-      });
-    }
-
-    lines.push("", "## Raw Materials Required");
-    rawMaterials.forEach((e) => {
-      lines.push(`- ${e.itemName}: **${formatAmount(e.amount)}** ${(e.itemType === "fluid" || e.itemType === "gas") ? "mB" : ""}`);
+    // 1. Calculate highest machine tier
+    let maxTierIdx = -1;
+    let maxTierName = "N/A";
+    sortedMachines.forEach((m) => {
+      const idx = getTierIndex(m.machineId);
+      if (idx > maxTierIdx) {
+        maxTierIdx = idx;
+        maxTierName = TIER_NAMES[TIER_ORDER[idx]] || "N/A";
+      }
     });
 
+    const lines = [
+      `# Manufacturing Plan: ${targetItemName ?? "Unknown"} ×${formatAmount(targetAmount)}`,
+      `- **Highest Machine Tier Required:** ${maxTierName}`,
+      "",
+      "## 🌳 Assembly Pipeline (Visual Tree)",
+      "```text",
+    ];
+
+    // 2. Build ASCII tree
+    const root = nodes.find((n) => n.id === "node-root");
+    if (!root) {
+      lines.push("No machine pipeline.");
+    } else {
+      const treeLines: string[] = [];
+
+      function traverse(nodeId: string, prefix: string, isLast: boolean) {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return;
+
+        const displayName = node.machineId
+          ? `${node.machineName} (produces: ${node.itemName} ×${formatAmount(node.requestedAmount)})`
+          : `${node.itemName} ×${formatAmount(node.requestedAmount)}`;
+
+        treeLines.push(prefix + (isLast ? "└── " : "├── ") + displayName);
+
+        const childEdges = edges.filter((e) => e.target === nodeId);
+        const children = childEdges
+          .map((e) => nodes.find((n) => n.id === e.source))
+          .filter((n): n is TreeNodeData => !!n);
+
+        const newPrefix = prefix + (isLast ? "    " : "│   ");
+        children.forEach((child, index) => {
+          traverse(child.id, newPrefix, index === children.length - 1);
+        });
+      }
+
+      // Root node
+      const rootDisplayName = root.machineId
+        ? `${root.machineName} (produces: ${root.itemName} ×${formatAmount(root.requestedAmount)})`
+        : `${root.itemName} ×${formatAmount(root.requestedAmount)}`;
+      treeLines.push(rootDisplayName);
+
+      // Root children
+      const rootChildEdges = edges.filter((e) => e.target === root.id);
+      const rootChildren = rootChildEdges
+        .map((e) => nodes.find((n) => n.id === e.source))
+        .filter((n): n is TreeNodeData => !!n);
+
+      rootChildren.forEach((child, index) => {
+        traverse(child.id, "", index === rootChildren.length - 1);
+      });
+
+      lines.push(...treeLines);
+    }
+    lines.push("```", "");
+
+    // 3. Machine counts checklist
+    lines.push("## 🛠️ Machines Required");
+    const machineCounts: Record<string, { name: string; count: number; id: string }> = {};
+    sortedMachines.forEach((m) => {
+      if (!m.machineId) return;
+      if (!machineCounts[m.machineId]) {
+        machineCounts[m.machineId] = { name: m.machineName || "Unknown", count: 0, id: m.machineId };
+      }
+      machineCounts[m.machineId].count += 1;
+    });
+
+    const machineList = Object.values(machineCounts);
+    if (machineList.length === 0) {
+      lines.push("- [x] No machines required (raw items only)");
+    } else {
+      machineList.forEach((m) => {
+        lines.push(`- [ ] ${m.count}x **${m.name}** (\`${m.id}\`)`);
+      });
+    }
+    lines.push("");
+
+    // 4. Raw materials checklist
+    lines.push("## 📦 Raw Materials Required");
+    if (rawMaterials.length === 0) {
+      lines.push("- [x] All inputs connected (No raw materials needed)");
+    } else {
+      rawMaterials.forEach((e) => {
+        const unit = (e.itemType === "fluid" || e.itemType === "gas") ? " mB" : "";
+        lines.push(`- [ ] ${e.itemName}: **${formatAmount(e.amount)}**${unit} (\`${e.itemId}\`)`);
+      });
+    }
+    lines.push("");
+
+    // 5. Catalysts checklist (if any)
     if (catalysts.length > 0) {
-      lines.push("", "## Catalysts Required", ...catalysts.map((e) => {
-        if (e.itemId === "gtceu:programmed_circuit") return `- ${e.itemName}: **Conf ${e.amount}**`;
-        return `- ${e.itemName}: **${formatAmount(e.amount)}×**`;
-      }));
+      lines.push("## 🧪 Catalysts Required");
+      catalysts.forEach((e) => {
+        if (e.itemId === "gtceu:programmed_circuit") {
+          lines.push(`- [ ] ${e.itemName}: **Configuration ${e.amount}** (\`${e.itemId}\`)`);
+        } else {
+          lines.push(`- [ ] ${e.itemName}: **${formatAmount(e.amount)}×** (\`${e.itemId}\`)`);
+        }
+      });
+      lines.push("");
     }
 
     return lines.join("\n");
   }
 
-  function buildJsonExport() {
-    return JSON.stringify(
+  function triggerJsonDownload() {
+    if (!rawNodes) return;
+    const jsonStr = JSON.stringify(
       {
-        target: { name: targetItemName, amount: targetAmount },
-        pipeline: sortedMachines.map((m, idx) => ({
-          step: idx + 1,
-          machineId: m.machineId,
-          machineName: m.machineName,
-          produces: { itemId: m.itemId, itemName: m.itemName, amount: m.requestedAmount },
-          inputs: m.inputs.map((input) => {
-            let fromStep = null;
-            const edge = edges.find((e) => e.target === m.id && e.targetHandle === `input-${input.itemId}`);
-            if (edge) {
-              const childNode = nodes.find((n) => n.id === edge.source);
-              if (childNode && childNode.machineId !== null) {
-                fromStep = sortedMachines.findIndex((sm) => sm.id === childNode.id) + 1;
-              }
-            }
-            return {
-              itemId: input.itemId,
-              itemName: input.itemName,
-              amount: input.amount * m.batchMultiplier,
-              fromStep,
-            };
-          }),
-        })),
-        rawMaterials,
-        catalysts,
+        version: "1.0",
+        targetItem: targetItemName,
+        targetAmount,
+        rootItem,
+        nodes: rawNodes,
+        edges,
       },
       null,
       2
     );
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safeName = (targetItemName || "plan")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    a.href = url;
+    a.download = `crafting-tree-${safeName}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
+
+  function triggerJsonUpload() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  }
+
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const data = JSON.parse(text);
+        
+        if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+          alert("Invalid file format: 'nodes' or 'edges' missing.");
+          return;
+        }
+
+        if (onImportState) {
+          onImportState({
+            nodes: data.nodes,
+            edges: data.edges,
+            targetAmount: data.targetAmount ?? 1,
+            rootItem: data.rootItem ?? null,
+          });
+        }
+      } catch (err) {
+        alert("Failed to parse JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
 
   return (
     <div
@@ -542,8 +711,8 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
           ...dragHandleProps?.style,
         }}
       >
-        <div style={{ color: "#e5e5e5", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}>
-          🛠️ Materials & Equipment
+        <div style={{ color: "#e5e5e5", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+          <Wrench size={12} style={{ color: "#a8a29e" }} /> Materials & Equipment
         </div>
         {targetItemName && (
           <div style={{ marginTop: 6, color: "#666", fontSize: 9 }}>
@@ -613,7 +782,9 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
             gap: 8,
           }}
         >
-          <div style={{ fontSize: 32 }}>🌱</div>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}>
+            <Compass size={32} style={{ color: "#555" }} />
+          </div>
           <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", textAlign: "center", lineHeight: 1.6 }}>
             Define a target item<br />to plan materials
           </div>
@@ -761,7 +932,8 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
               {/* Raw Materials – always shown */}
               <div style={{ padding: "8px 12px 6px", fontSize: 9.5, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 6 }}>
-                <span>📦 Raw Materials</span>
+                <Package size={11} style={{ color: "#3b82f6" }} />
+                <span>Raw Materials</span>
                 <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px", fontSize: 9 }}>{rawMaterials.length}</span>
               </div>
               {rawMaterials.length === 0 ? (
@@ -778,7 +950,8 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
               {catalysts.length > 0 && (
                 <>
                   <div style={{ padding: "12px 12px 6px", fontSize: 9.5, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 6, borderTop: "1px solid #1a1a1a", marginTop: 6 }}>
-                    <span>⚗️ Catalysts</span>
+                    <FlaskConical size={11} style={{ color: "#fb923c" }} />
+                    <span>Catalysts</span>
                     <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px", fontSize: 9 }}>{catalysts.length}</span>
                   </div>
                   {catalysts.map((e) => (
@@ -792,8 +965,9 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
           {/* TAB 3: INDIVIDUAL MACHINES */}
           {activeTab === "machines" && (
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-              <div style={{ padding: "6px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 5 }}>
-                <span>⚙️ Active Machines</span>
+              <div style={{ padding: "6px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 6 }}>
+                <Cpu size={10} style={{ color: "#10b981" }} />
+                <span>Active Machines</span>
                 <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px" }}>{sortedMachines.length}</span>
               </div>
               {sortedMachines.length === 0 ? (
@@ -816,57 +990,191 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
       )}
 
       {/* Export Footer */}
-      {!isEmpty && (
-        <div
-          style={{
-            padding: "8px 10px",
-            borderTop: "1px solid #282828",
-            flexShrink: 0,
-            fontFamily: "var(--font-geist-mono, monospace)",
-          }}
-        >
-          <div style={{ fontSize: 8, color: "#444", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
-            Export Materials & Pipeline
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[
-              { label: "Markdown", fn: buildMarkdownExport },
-              { label: "JSON",     fn: buildJsonExport },
-            ].map(({ label, fn }) => (
-              <button
-                key={label}
-                onClick={() => copyToClipboard(fn())}
+      <div
+        style={{
+          padding: "8px 10px",
+          borderTop: "1px solid #282828",
+          flexShrink: 0,
+          fontFamily: "var(--font-geist-mono, monospace)",
+          position: "relative",
+        }}
+      >
+        <div style={{ fontSize: 8, color: "#444", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>
+          Export Materials & Pipeline
+        </div>
+        <div style={{ display: "flex", gap: 6, position: "relative" }}>
+          {/* Markdown button with copy feedback */}
+          <button
+            onClick={() => {
+              if (isEmpty) return;
+              copyToClipboard(buildMarkdownExport());
+              setCopiedMarkdown(true);
+              setTimeout(() => setCopiedMarkdown(false), 2000);
+            }}
+            disabled={isEmpty}
+            style={{
+              flex: 1,
+              padding: "5px 0",
+              background: "#222",
+              border: copiedMarkdown ? "1px solid #10b981" : "1px solid #333",
+              borderRadius: 5,
+              color: copiedMarkdown ? "#10b981" : isEmpty ? "#444" : "#666",
+              fontSize: 9,
+              letterSpacing: "0.08em",
+              cursor: isEmpty ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              textTransform: "uppercase",
+              transition: "all 0.15s ease",
+              fontWeight: copiedMarkdown ? "bold" : "normal",
+              opacity: isEmpty ? 0.4 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (isEmpty) return;
+              e.currentTarget.style.background = "#2a2a2a";
+              e.currentTarget.style.borderColor = copiedMarkdown ? "#10b981" : "#444";
+              if (!copiedMarkdown) e.currentTarget.style.color = "#ccc";
+            }}
+            onMouseLeave={(e) => {
+              if (isEmpty) return;
+              e.currentTarget.style.background = "#222";
+              e.currentTarget.style.borderColor = copiedMarkdown ? "#10b981" : "#333";
+              if (!copiedMarkdown) e.currentTarget.style.color = "#666";
+            }}
+          >
+            {copiedMarkdown ? "✓ Copied!" : "Markdown"}
+          </button>
+
+          {/* JSON dropdown button */}
+          <div ref={dropdownRef} style={{ flex: 1, position: "relative" }}>
+            <button
+              onClick={() => setIsJsonDropdownOpen(!isJsonDropdownOpen)}
+              style={{
+                width: "100%",
+                padding: "5px 0",
+                background: "#222",
+                border: isJsonDropdownOpen ? "1px solid #3b82f6" : "1px solid #333",
+                borderRadius: 5,
+                color: isJsonDropdownOpen ? "#3b82f6" : "#666",
+                fontSize: 9,
+                letterSpacing: "0.08em",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textTransform: "uppercase",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#2a2a2a";
+                e.currentTarget.style.borderColor = isJsonDropdownOpen ? "#3b82f6" : "#444";
+                if (!isJsonDropdownOpen) e.currentTarget.style.color = "#ccc";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#222";
+                e.currentTarget.style.borderColor = isJsonDropdownOpen ? "#3b82f6" : "#333";
+                if (!isJsonDropdownOpen) e.currentTarget.style.color = "#666";
+              }}
+            >
+              JSON {isJsonDropdownOpen ? "▴" : "▾"}
+            </button>
+
+            {/* Dropdown Menu (sliding up from button) */}
+            {isJsonDropdownOpen && (
+              <div
                 style={{
-                  flex: 1,
-                  padding: "5px 0",
-                  background: "#222",
-                  border: "1px solid #333",
-                  borderRadius: 5,
-                  color: "#666",
-                  fontSize: 9,
-                  letterSpacing: "0.08em",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  textTransform: "uppercase",
-                  transition: "all 0.15s ease",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#2a2a2a";
-                  e.currentTarget.style.borderColor = "#444";
-                  e.currentTarget.style.color = "#ccc";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "#222";
-                  e.currentTarget.style.borderColor = "#333";
-                  e.currentTarget.style.color = "#666";
+                  position: "absolute",
+                  bottom: "100%",
+                  left: 0,
+                  right: 0,
+                  marginBottom: 6,
+                  background: "#1e1e1e",
+                  border: "1px solid #2d2d2d",
+                  borderRadius: 6,
+                  boxShadow: "0 -8px 24px rgba(0,0,0,0.5)",
+                  zIndex: 100,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
               >
-                {label}
-              </button>
-            ))}
+                <button
+                  onClick={() => {
+                    if (isEmpty) return;
+                    setIsJsonDropdownOpen(false);
+                    triggerJsonDownload();
+                  }}
+                  disabled={isEmpty}
+                  style={{
+                    padding: "8px 12px",
+                    background: "transparent",
+                    border: "none",
+                    borderBottom: "1px solid #282828",
+                    color: isEmpty ? "#444" : "#aaa",
+                    fontSize: 9,
+                    textAlign: "left",
+                    cursor: isEmpty ? "not-allowed" : "pointer",
+                    fontFamily: "inherit",
+                    transition: "background 0.15s, color 0.15s",
+                    opacity: isEmpty ? 0.4 : 1,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isEmpty) return;
+                    e.currentTarget.style.background = "#2a2a2a";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (isEmpty) return;
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#aaa";
+                  }}
+                >
+                  <Save size={10} style={{ color: isEmpty ? "#444" : "#10b981" }} /> Save (Export)
+                </button>
+                <button
+                  onClick={() => {
+                    setIsJsonDropdownOpen(false);
+                    triggerJsonUpload();
+                  }}
+                  style={{
+                    padding: "8px 12px",
+                    background: "transparent",
+                    border: "none",
+                    color: "#aaa",
+                    fontSize: 9,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    transition: "background 0.15s, color 0.15s",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#2a2a2a";
+                    e.currentTarget.style.color = "#fff";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#aaa";
+                  }}
+                >
+                  <FolderOpen size={10} style={{ color: "#3b82f6" }} /> Load (Import)
+                </button>
+              </div>
+            )}
           </div>
         </div>
-      )}
+
+        {/* Hidden file input for import */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".json"
+          onChange={handleFileChange}
+          style={{ display: "none" }}
+        />
+      </div>
     </div>
   );
 }
