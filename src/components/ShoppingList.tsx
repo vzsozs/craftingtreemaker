@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { buildShoppingList, formatAmount } from "@/lib/batchCalc";
 import type { TreeNodeData, ShoppingListEntry } from "@/lib/batchCalc";
 import { IconImage } from "@/components/IconImage";
@@ -27,8 +27,8 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "6px 10px",
+        gap: 12,
+        padding: "10px 14px",
         borderBottom: "1px solid #222222",
         fontFamily: "var(--font-geist-mono, monospace)",
         transition: "background 0.15s ease",
@@ -39,8 +39,8 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
       {/* mini slot */}
       <div
         style={{
-          width: 28,
-          height: 28,
+          width: 42,
+          height: 42,
           flexShrink: 0,
           background: "#222",
           border: `1.5px solid ${typeColors[entry.itemType] ?? "#555"}`,
@@ -54,21 +54,21 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
         <IconImage
           itemId={entry.itemId}
           itemName={entry.itemName}
-          size={28}
+          size={42}
           itemType={entry.itemType}
           textStyle={{
             color: "#888",
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: 700,
             fontFamily: "monospace",
           }}
         />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: "#e5e5e5", fontSize: 10, fontWeight: 600, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: "#e5e5e5", fontSize: 12, fontWeight: 600, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {entry.itemName}
         </div>
-        <div style={{ color: "#555", fontSize: 8, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ color: "#555", fontSize: 9.5, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {entry.itemId}
         </div>
       </div>
@@ -76,17 +76,17 @@ function EntryRow({ entry }: { entry: ShoppingListEntry }) {
         style={{
           flexShrink: 0,
           color: entry.isCatalyst ? "#fb923c" : "#34d399",
-          fontSize: 12,
+          fontSize: 13,
           fontWeight: 700,
           background: "rgba(0,0,0,0.2)",
-          padding: "2px 6px",
+          padding: "4px 9px",
           borderRadius: 4,
           border: "1px solid rgba(255,255,255,0.03)",
         }}
       >
         {entry.itemId === "gtceu:programmed_circuit" 
           ? `Conf ${entry.amount}` 
-          : <>×{formatAmount(entry.amount)}{(entry.itemType === "fluid" || entry.itemType === "gas") && <span style={{ fontSize: 8, opacity: 0.65, marginLeft: 1 }}>mB</span>}</>}
+          : <>×{formatAmount(entry.amount)}{(entry.itemType === "fluid" || entry.itemType === "gas") && <span style={{ fontSize: 9, opacity: 0.65, marginLeft: 1 }}>mB</span>}</>}
       </div>
     </div>
   );
@@ -97,236 +97,231 @@ function copyToClipboard(text: string) {
 }
 
 // Recursive tree node component for the visual machine pipeline
-function PipelineTreeNode({
+function PipelineCard({
   mNode,
-  nodes,
-  edges,
   onSelectNode,
-  visited = new Set(),
 }: {
   mNode: TreeNodeData;
-  nodes: TreeNodeData[];
-  edges: Edge[];
   onSelectNode?: (nodeId: string) => void;
-  visited?: Set<string>;
 }) {
-  if (visited.has(mNode.id)) {
-    return (
-      <div style={{
-        background: "#161616",
-        border: "1px dashed #444",
-        borderRadius: 6,
-        padding: "4px 8px",
-        fontSize: 8,
-        color: "#666",
-        fontFamily: "var(--font-geist-mono, monospace)"
-      }}>
-        ↺ {mNode.machineName} (feljebb)
-      </div>
-    );
-  }
-
-  const nextVisited = new Set(visited);
-  nextVisited.add(mNode.id);
-
-  const childrenRaw = mNode.isLockedRaw
-    ? []
-    : edges
-        .filter((e) => e.target === mNode.id)
-        .map((e) => nodes.find((n) => n.id === e.source))
-        .filter((n): n is TreeNodeData => !!n && n.machineId !== null);
-
-  // Deduplicate children by ID to avoid rendering duplicate elements under the same node
-  const children = Array.from(new Map(childrenRaw.map(c => [c.id, c])).values());
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
-      {/* The Machine Card */}
-      <div
-        onClick={() => onSelectNode?.(mNode.id)}
-        style={{
-          background: mNode.isLockedRaw ? "#11221a" : "#1e1e1e",
-          border: mNode.isLockedRaw ? "1.5px solid #10b981" : "1px solid #282828",
-          borderRadius: 6,
-          padding: "4px 6px",
-          minWidth: 90,
-          maxWidth: 120,
-          textAlign: "center",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
-          cursor: "pointer",
-          transition: "border-color 0.12s, transform 0.12s, background-color 0.12s",
-          userSelect: "none",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#3b82f6";
-          e.currentTarget.style.transform = "scale(1.03)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = mNode.isLockedRaw ? "#10b981" : "#282828";
-          e.currentTarget.style.transform = "scale(1)";
-        }}
-        title={`Click to focus in canvas\n${mNode.machineName ?? "Crafting"}`}
-      >
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-          {/* Machine Icon - 3x of 12 = 36 */}
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              background: "#111",
-              border: "1px solid #333",
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
-            <IconImage itemId={mNode.machineId ?? "minecraft:crafting_table"} itemName={mNode.machineName ?? "Crafting"} size={36} />
-          </div>
-          
-          {/* Machine Name */}
-          <div
-            style={{
-              color: "#fff",
-              fontSize: 7,
-              fontWeight: 700,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              width: "100%",
-              textAlign: "center",
-              fontFamily: "var(--font-geist-sans), sans-serif",
-            }}
-          >
-            {mNode.machineName}
-          </div>
-        </div>
-
-        {/* Output Item & Amount (Icon size: 4x of 8 = 32) */}
+    <div
+      onClick={() => onSelectNode?.(mNode.id)}
+      data-node-id={mNode.id}
+      style={{
+        background: mNode.isLockedRaw ? "#11221a" : "#1e1e1e",
+        border: mNode.isLockedRaw ? "1.5px solid #10b981" : "1px solid #282828",
+        borderRadius: 6,
+        padding: "4px 6px",
+        minWidth: 90,
+        maxWidth: 120,
+        textAlign: "center",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+        cursor: "pointer",
+        transition: "border-color 0.12s, transform 0.12s, background-color 0.12s",
+        userSelect: "none",
+        zIndex: 2,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "#3b82f6";
+        e.currentTarget.style.transform = "scale(1.03)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = mNode.isLockedRaw ? "#10b981" : "#282828";
+        e.currentTarget.style.transform = "scale(1)";
+      }}
+      title={`Click to focus in canvas\n${mNode.machineName ?? "Crafting"}`}
+    >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+        {/* Machine Icon - 3x of 12 = 36 */}
         <div
           style={{
-            marginTop: 4,
+            width: 36,
+            height: 36,
+            background: "#111",
+            border: "1px solid #333",
+            borderRadius: 4,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: 4,
-            fontSize: 10,
-            color: "#10b981",
+            flexShrink: 0,
           }}
         >
-          <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <IconImage itemId={mNode.itemId} itemName={mNode.itemName} size={32} itemType={mNode.itemType} />
-          </div>
-          <span
-            style={{
-              fontWeight: 700,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontFamily: "var(--font-geist-sans), sans-serif",
-            }}
-          >
-            ×{formatAmount(mNode.requestedAmount)}
-          </span>
+          <IconImage itemId={mNode.machineId ?? "minecraft:crafting_table"} itemName={mNode.machineName ?? "Crafting"} size={36} />
         </div>
         
-        {/* Product Name */}
+        {/* Machine Name */}
         <div
           style={{
-            color: "#bbb",
+            color: "#fff",
             fontSize: 7,
-            fontWeight: 400,
+            fontWeight: 700,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             width: "100%",
             textAlign: "center",
             fontFamily: "var(--font-geist-sans), sans-serif",
-            marginTop: 2,
           }}
-          title={mNode.itemName}
         >
-          {mNode.itemName}
+          {mNode.machineName}
         </div>
-        
-        {/* Lock indicator */}
-        {mNode.isLockedRaw && (
-          <div style={{ color: "#10b981", fontSize: 6, fontWeight: 700, marginTop: 2 }}>
-            🔒 Locked
-          </div>
-        )}
       </div>
 
-      {/* Children */}
-      {children.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
-          {/* Vertical connector down */}
-          <div style={{ width: 1, height: 8, background: "#3b82f6", opacity: 0.4 }} />
-
-          {/* Row of children with horizontal connectors */}
-          <div style={{ display: "flex", position: "relative", gap: 8 }}>
-            {children.map((child, idx) => {
-              const isFirst = idx === 0;
-              const isLast = idx === children.length - 1;
-
-              return (
-                <div
-                  key={`${mNode.id}-${child.id}-${idx}`}
-                  style={{
-                    position: "relative",
-                    paddingTop: 8,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                  }}
-                >
-                  {/* Horizontal line segment */}
-                  {children.length > 1 && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: isFirst ? "50%" : 0,
-                        right: isLast ? "50%" : 0,
-                        height: 1,
-                        background: "#3b82f6",
-                        opacity: 0.4,
-                      }}
-                    />
-                  )}
-                  {/* Vertical connector up to the horizontal line */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 1,
-                      height: 8,
-                      background: "#3b82f6",
-                      opacity: 0.4,
-                    }}
-                  />
-                  <PipelineTreeNode
-                    mNode={child}
-                    nodes={nodes}
-                    edges={edges}
-                    onSelectNode={onSelectNode}
-                    visited={nextVisited}
-                  />
-                </div>
-              );
-            })}
-          </div>
+      {/* Output Item & Amount (Icon size: 4x of 8 = 32) */}
+      <div
+        style={{
+          marginTop: 4,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 4,
+          fontSize: 10,
+          color: "#10b981",
+        }}
+      >
+        <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <IconImage itemId={mNode.itemId} itemName={mNode.itemName} size={32} itemType={mNode.itemType} />
+        </div>
+        <span
+          style={{
+            fontWeight: 700,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontFamily: "var(--font-geist-sans), sans-serif",
+          }}
+        >
+          ×{formatAmount(mNode.requestedAmount)}
+        </span>
+      </div>
+      
+      {/* Product Name */}
+      <div
+        style={{
+          color: "#bbb",
+          fontSize: 7,
+          fontWeight: 400,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          width: "100%",
+          textAlign: "center",
+          fontFamily: "var(--font-geist-sans), sans-serif",
+          marginTop: 2,
+        }}
+        title={mNode.itemName}
+      >
+        {mNode.itemName}
+      </div>
+      
+      {/* Lock indicator */}
+      {mNode.isLockedRaw && (
+        <div style={{ color: "#10b981", fontSize: 6, fontWeight: 700, marginTop: 2 }}>
+          🔒 Locked
         </div>
       )}
     </div>
   );
 }
 
+function MachineRow({
+  index,
+  mNode,
+  onSelectNode,
+}: {
+  index: number;
+  mNode: TreeNodeData;
+  onSelectNode?: (nodeId: string) => void;
+}) {
+  return (
+    <div
+      onClick={() => onSelectNode?.(mNode.id)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        borderBottom: "1px solid #222222",
+        fontFamily: "var(--font-geist-sans), sans-serif",
+        cursor: "pointer",
+        transition: "background 0.15s ease",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "#252525")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      title="Click to focus in canvas"
+    >
+      {/* Step index */}
+      <span style={{ fontSize: 9, color: "#666", fontWeight: 700, minWidth: 16 }}>
+        {index}.
+      </span>
+
+      {/* Machine Icon */}
+      <div
+        style={{
+          width: 42,
+          height: 42,
+          flexShrink: 0,
+          background: "#1a1a1a",
+          border: "1px solid #333",
+          borderRadius: 6,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <IconImage
+          itemId={mNode.machineId ?? "minecraft:crafting_table"}
+          itemName={mNode.machineName ?? "Crafting"}
+          size={42}
+        />
+      </div>
+
+      {/* Machine Details */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: "#e5e5e5", fontSize: 12, fontWeight: 700, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {mNode.machineName}
+        </div>
+        <div style={{ color: "#555", fontSize: 9.5, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {mNode.machineId}
+        </div>
+      </div>
+
+      {/* Product Image & Info */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          background: "rgba(0,0,0,0.2)",
+          padding: "3px 8px",
+          borderRadius: 6,
+          border: "1px solid rgba(255,255,255,0.03)",
+          maxWidth: "35%",
+          minWidth: 0,
+        }}
+      >
+        <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <IconImage itemId={mNode.itemId} itemName={mNode.itemName} size={32} itemType={mNode.itemType} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: "#10b981", fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            ×{formatAmount(mNode.requestedAmount)}
+          </div>
+          <div 
+            style={{ color: "#666", fontSize: 9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={mNode.itemName}
+          >
+            {mNode.itemName}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ShoppingList({ nodes, edges, targetItemName, targetAmount, dragHandleProps, onSelectNode }: ShoppingListProps) {
-  const [activeTab, setActiveTab] = useState<"equipment" | "materials">("equipment");
+  const [activeTab, setActiveTab] = useState<"equipment" | "materials" | "machines">("equipment");
   const [zoom, setZoom] = useState(1);
 
   // Build raw materials and catalysts
@@ -366,6 +361,84 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
 
     return result;
   }, [nodes, edges]);
+
+  // DAG levels calculation
+  const levelMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    const reversed = [...sortedMachines].reverse();
+    for (const m of reversed) {
+      if (map[m.id] === undefined) {
+        map[m.id] = 0;
+      }
+      const childEdges = edges.filter(e => e.target === m.id);
+      for (const edge of childEdges) {
+        const childNode = sortedMachines.find(n => n.id === edge.source);
+        if (childNode) {
+          map[childNode.id] = Math.max(map[childNode.id] ?? 0, map[m.id] + 1);
+        }
+      }
+    }
+    return map;
+  }, [sortedMachines, edges]);
+
+  const levelsArray = useMemo(() => {
+    if (sortedMachines.length === 0) return [];
+    const maxLevel = Math.max(0, ...Object.values(levelMap));
+    const arr: TreeNodeData[][] = Array.from({ length: maxLevel + 1 }, () => []);
+    for (const m of sortedMachines) {
+      const lvl = levelMap[m.id] ?? 0;
+      arr[lvl].push(m);
+    }
+    return arr;
+  }, [sortedMachines, levelMap]);
+
+  // Coordinate measuring and SVG path connections
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [connections, setConnections] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
+
+  const updateConnections = useCallback(() => {
+    if (!containerRef.current) return;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const cardElements = containerRef.current.querySelectorAll<HTMLElement>("[data-node-id]");
+    const coords: Record<string, { x: number; y: number; w: number; h: number }> = {};
+    
+    cardElements.forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const nodeId = el.getAttribute("data-node-id")!;
+      coords[nodeId] = {
+        x: (rect.left - containerRect.left) / zoom,
+        y: (rect.top - containerRect.top) / zoom,
+        w: rect.width / zoom,
+        h: rect.height / zoom,
+      };
+    });
+    
+    const newConnections: typeof connections = [];
+    for (const edge of edges) {
+      const sourceCoords = coords[edge.source];
+      const targetCoords = coords[edge.target];
+      if (sourceCoords && targetCoords) {
+        newConnections.push({
+          x1: sourceCoords.x + sourceCoords.w / 2,
+          y1: sourceCoords.y,
+          x2: targetCoords.x + targetCoords.w / 2,
+          y2: targetCoords.y + targetCoords.h,
+        });
+      }
+    }
+    setConnections(newConnections);
+  }, [edges, zoom]);
+
+  useEffect(() => {
+    updateConnections();
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      const observer = new ResizeObserver(() => {
+        updateConnections();
+      });
+      observer.observe(containerRef.current);
+      return () => observer.disconnect();
+    }
+  }, [sortedMachines, edges, zoom, updateConnections]);
 
   const isEmpty = nodes.length === 0;
 
@@ -496,12 +569,13 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
           {[
             { id: "equipment", label: "Pipeline" },
             { id: "materials", label: "Materials" },
+            { id: "machines",  label: "Machines" },
           ].map((tab) => {
             const active = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as "equipment" | "materials")}
+                onClick={() => setActiveTab(tab.id as "equipment" | "materials" | "machines")}
                 style={{
                   flex: 1,
                   padding: "6px 0",
@@ -622,46 +696,61 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
                   No machines required (raw items only)
                 </div>
               ) : (
-                <div style={{
-                  width: "max-content",
-                  minWidth: "100%",
-                  display: "flex",
-                  justifyContent: "center",
-                  zoom: zoom,
-                  transition: "zoom 0.12s ease",
-                }}>
-                  {(() => {
-                    const rootMachines = sortedMachines.filter(
-                      (m) => !edges.some((e) => e.source === m.id)
-                    );
-                    
-                    if (rootMachines.length === 0) {
-                      const fallbackRoot = sortedMachines[sortedMachines.length - 1];
-                      if (!fallbackRoot) return null;
+                <div
+                  ref={containerRef}
+                  style={{
+                    width: "max-content",
+                    minWidth: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 32,
+                    alignItems: "center",
+                    zoom: zoom,
+                    transition: "zoom 0.12s ease",
+                    position: "relative",
+                    padding: "16px 16px 32px",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {/* SVG Overlay behind the cards */}
+                  <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 0 }}>
+                    {connections.map((c, idx) => {
+                      const controlHeight = Math.min(24, Math.abs(c.y2 - c.y1) / 2);
+                      const pathStr = `M ${c.x1} ${c.y1} C ${c.x1} ${c.y1 - controlHeight}, ${c.x2} ${c.y2 + controlHeight}, ${c.x2} ${c.y2}`;
                       return (
-                        <PipelineTreeNode
-                          mNode={fallbackRoot}
-                          nodes={nodes}
-                          edges={edges}
-                          onSelectNode={onSelectNode}
+                        <path
+                          key={idx}
+                          d={pathStr}
+                          stroke="#3b82f6"
+                          strokeWidth="1.5"
+                          fill="none"
+                          opacity="0.45"
                         />
                       );
-                    }
+                    })}
+                  </svg>
 
-                    return (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
-                        {rootMachines.map((rootNode) => (
-                          <PipelineTreeNode
-                            key={rootNode.id}
-                            mNode={rootNode}
-                            nodes={nodes}
-                            edges={edges}
-                            onSelectNode={onSelectNode}
-                          />
-                        ))}
-                      </div>
-                    );
-                  })()}
+                  {/* Level-by-level Row Rendering */}
+                  {levelsArray.map((rowNodes, lvlIdx) => (
+                    <div
+                      key={lvlIdx}
+                      style={{
+                        display: "flex",
+                        gap: 24,
+                        justifyContent: "center",
+                        flexWrap: "nowrap",
+                        zIndex: 1,
+                      }}
+                    >
+                      {rowNodes.map((mNode) => (
+                        <PipelineCard
+                          key={mNode.id}
+                          mNode={mNode}
+                          onSelectNode={onSelectNode}
+                        />
+                      ))}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -671,12 +760,12 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
           {activeTab === "materials" && (
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
               {/* Raw Materials – always shown */}
-              <div style={{ padding: "6px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ padding: "8px 12px 6px", fontSize: 9.5, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 6 }}>
                 <span>📦 Raw Materials</span>
-                <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px" }}>{rawMaterials.length}</span>
+                <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px", fontSize: 9 }}>{rawMaterials.length}</span>
               </div>
               {rawMaterials.length === 0 ? (
-                <div style={{ padding: "10px 10px", fontSize: 9, color: "#333", fontFamily: "monospace", textAlign: "center" }}>
+                <div style={{ padding: "12px 10px", fontSize: 10, color: "#333", fontFamily: "monospace", textAlign: "center" }}>
                   ✓ All inputs connected
                 </div>
               ) : (
@@ -688,14 +777,38 @@ export default function ShoppingList({ nodes, edges, targetItemName, targetAmoun
               {/* Catalysts – shown only when present */}
               {catalysts.length > 0 && (
                 <>
-                  <div style={{ padding: "10px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 5, borderTop: "1px solid #1a1a1a", marginTop: 4 }}>
+                  <div style={{ padding: "12px 12px 6px", fontSize: 9.5, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 6, borderTop: "1px solid #1a1a1a", marginTop: 6 }}>
                     <span>⚗️ Catalysts</span>
-                    <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px" }}>{catalysts.length}</span>
+                    <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px", fontSize: 9 }}>{catalysts.length}</span>
                   </div>
                   {catalysts.map((e) => (
                     <EntryRow key={e.itemId} entry={e} />
                   ))}
                 </>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: INDIVIDUAL MACHINES */}
+          {activeTab === "machines" && (
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+              <div style={{ padding: "6px 10px 4px", fontSize: 8, color: "#555", letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700, borderBottom: "1px solid #222", display: "flex", alignItems: "center", gap: 5 }}>
+                <span>⚙️ Active Machines</span>
+                <span style={{ color: "#333", background: "#222", borderRadius: 3, padding: "0 4px" }}>{sortedMachines.length}</span>
+              </div>
+              {sortedMachines.length === 0 ? (
+                <div style={{ padding: "10px 10px", fontSize: 9, color: "#333", fontFamily: "monospace", textAlign: "center" }}>
+                  No machines active (raw items only)
+                </div>
+              ) : (
+                sortedMachines.map((mNode, idx) => (
+                  <MachineRow
+                    key={mNode.id}
+                    index={idx + 1}
+                    mNode={mNode}
+                    onSelectNode={onSelectNode}
+                  />
+                ))
               )}
             </div>
           )}
